@@ -1,11 +1,8 @@
-// api/index.js
 import express from 'express';
 import cors from 'cors';
-import pkg from 'pg';  // Postgres import for ES modules
+import pkg from 'pg';
 const { Pool } = pkg;
 import crypto from 'crypto';
-import pg from 'pg';
-
 
 const app = express();
 app.use(cors()); // Enable Cross-Origin Resource Sharing
@@ -25,7 +22,12 @@ if (!connectionString) {
     });
 }
 
-const pool = new Pool({ connectionString });
+const pool = new Pool({
+  connectionString,
+  ssl: {
+    rejectUnauthorized: false,
+  },
+});
 
 // --- HELPER FUNCTION ---
 const generateRandomPassword = (length = 10) => {
@@ -52,7 +54,7 @@ app.post('/auth/login', async (req, res) => {
         const result = await pool.query('SELECT * FROM users WHERE email = $1 AND password = $2', [email, password]);
         if (result.rows.length > 0) {
             // Don't send the password back to the client
-            const { password, ...user } = result.rows[0];
+            const { password: _, ...user } = result.rows[0];
             res.json(user);
         } else {
             res.status(401).json({ message: 'Invalid credentials' });
@@ -187,7 +189,7 @@ app.post('/speakers', async (req, res) => {
 app.put('/speakers/:id', async (req, res) => {
     const { id } = req.params;
     const s = req.body;
-    const query = `UPDATE speakers SET "firstName"=$1, "lastName"=$2, title=$3, company=$4, "businessEmail"=$5, country=$6, website=$7, "fullName"=$8, "isEmailValid"=$9, "isLinkedInValid"=$10, "isWebsiteValid"=$11, "extractedRole"=$12, "isCeo"=$13, "isSpeaker"=$14, "isAuthor"=$15, industry=$16, "personLinkedinUrl"=$17, stage=$18, "phoneNumber"=$19, employees=$20, location=$21, city=$22, state=$23, "companyAddress"=$24, "companyCity"=$25, "companyState"=$26, "companyCountry"=$27, "companyPhone"=$28, "secondaryEmail"=$29, "speakingTopic"=$30, "speakingLink"=$31 WHERE id=$32 RETURNING *`;
+    const query = 'UPDATE speakers SET "firstName"=$1, "lastName"=$2, title=$3, company=$4, "businessEmail"=$5, country=$6, website=$7, "fullName"=$8, "isEmailValid"=$9, "isLinkedInValid"=$10, "isWebsiteValid"=$11, "extractedRole"=$12, "isCeo"=$13, "isSpeaker"=$14, "isAuthor"=$15, industry=$16, "personLinkedinUrl"=$17, stage=$18, "phoneNumber"=$19, employees=$20, location=$21, city=$22, state=$23, "companyAddress"=$24, "companyCity"=$25, "companyState"=$26, "companyCountry"=$27, "companyPhone"=$28, "secondaryEmail"=$29, "speakingTopic"=$30, "speakingLink"=$31 WHERE id=$32 RETURNING *';
     const values = [s.firstName, s.lastName, s.title, s.company, s.businessEmail, s.country, s.website, s.fullName, s.isEmailValid, s.isLinkedInValid, s.isWebsiteValid, s.extractedRole, s.isCeo, s.isSpeaker, s.isAuthor, s.industry, s.personLinkedinUrl, s.stage, s.phoneNumber, s.employees, s.location, s.city, s.state, s.companyAddress, s.companyCity, s.companyState, s.companyCountry, s.companyPhone, s.secondaryEmail, s.speakingTopic, s.speakingLink, id];
     try {
         const result = await pool.query(query, values);
@@ -230,7 +232,6 @@ app.post('/speakers/bulk', async (req, res) => {
         return res.status(400).json({ message: 'No speaker data provided.' });
     }
 
-    // De-duplicate the incoming array based on businessEmail, keeping the first occurrence.
     const seenEmails = new Set();
     const uniqueSpeakers = speakers.filter(s => {
         if (!s.businessEmail) return false;
@@ -260,10 +261,7 @@ app.post('/speakers/bulk', async (req, res) => {
             valuesClause.push(`(${paramPlaceholders.join(', ')})`);
             queryParams.push(...rowParams);
         });
-
-        // NOTE: This requires a UNIQUE constraint on the "businessEmail" column in your database.
-        // If you don't have one, run this SQL command:
-        // ALTER TABLE speakers ADD CONSTRAINT speakers_businessEmail_unique UNIQUE ("businessEmail");
+        
         const query = `
             INSERT INTO speakers (id, "createdBy", "firstName", "lastName", title, company, "businessEmail", country, website, "fullName", "isEmailValid", "isLinkedInValid", "isWebsiteValid", "extractedRole", "isCeo", "isSpeaker", "isAuthor", industry, "personLinkedinUrl", stage, "phoneNumber", employees, location, city, state, "companyAddress", "companyCity", "companyState", "companyCountry", "companyPhone", "secondaryEmail", "speakingTopic", "speakingLink")
             VALUES ${valuesClause.join(', ')}
@@ -289,7 +287,6 @@ app.post('/speakers/bulk', async (req, res) => {
         client.release();
     }
 });
-
 
 // --- EXPORT APP FOR VERCEL ---
 // The Express app is exported as a module, which Vercel will use to create a serverless function.

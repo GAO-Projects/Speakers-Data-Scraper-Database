@@ -1,8 +1,6 @@
 // This file is now a real API client, not a mock.
 import type { User, SpeakerData } from './types';
 
-// This relative path will work for both local development with `vercel dev`
-// and for the final production deployment.
 const API_BASE_URL = '/api';
 
 // Helper function for all API requests
