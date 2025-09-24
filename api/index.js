@@ -288,6 +288,6 @@ app.post('/speakers/bulk', async (req, res) => {
     }
 });
 
-// --- EXPORT APP FOR VERCEL ---
-// The Express app is exported as a module, which Vercel will use to create a serverless function.
-export default app;
+export default function handler(req, res) {
+  return app(req, res); // delegate to Express
+}
