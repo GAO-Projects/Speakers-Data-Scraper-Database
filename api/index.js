@@ -92,25 +92,8 @@ apiRouter.post('/users', async (req, res) => {
     }
 });
 
-// Update a user (by admin)
-apiRouter.put('/users/:originalEmail', async (req, res) => {
-    const { originalEmail } = req.params;
-    const { email, password } = req.body;
-    try {
-        let result;
-        if (password) {
-            result = await pool.query('UPDATE users SET email = $1, password = $2 WHERE email = $3 RETURNING email, "isAdmin"', [email, password, originalEmail]);
-        } else {
-            result = await pool.query('UPDATE users SET email = $1 WHERE email = $2 RETURNING email, "isAdmin"', [email, originalEmail]);
-        }
-        res.json(result.rows[0]);
-    } catch (err) {
-        if (err.code === '23505') return res.status(409).json({ message: 'The new email address is already in use.' });
-        res.status(500).json({ message: err.message });
-    }
-});
-
-// Change own password (by user)
+// Change own password (by user) - MOVED UP
+// This specific route must come BEFORE the parameterized route '/users/:originalEmail'
 apiRouter.put('/users/change-password', async (req, res) => {
     const { email, currentPassword, newPassword } = req.body;
 
@@ -131,6 +114,24 @@ apiRouter.put('/users/change-password', async (req, res) => {
     } catch (err) {
         console.error('Password change error:', err);
         res.status(500).json({ message: 'An internal server error occurred.' });
+    }
+});
+
+// Update a user (by admin)
+apiRouter.put('/users/:originalEmail', async (req, res) => {
+    const { originalEmail } = req.params;
+    const { email, password } = req.body;
+    try {
+        let result;
+        if (password) {
+            result = await pool.query('UPDATE users SET email = $1, password = $2 WHERE email = $3 RETURNING email, "isAdmin"', [email, password, originalEmail]);
+        } else {
+            result = await pool.query('UPDATE users SET email = $1 WHERE email = $2 RETURNING email, "isAdmin"', [email, originalEmail]);
+        }
+        res.json(result.rows[0]);
+    } catch (err) {
+        if (err.code === '23505') return res.status(409).json({ message: 'The new email address is already in use.' });
+        res.status(500).json({ message: err.message });
     }
 });
 
