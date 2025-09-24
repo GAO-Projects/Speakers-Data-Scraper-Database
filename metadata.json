@@ -1,0 +1,5 @@
+{
+  "name": "Scraping Data Speaker",
+  "description": "An application for admins to manage users and for users to input detailed speaker and company information. It features separate panels for administrative tasks and user data entry.",
+  "requestFramePermissions": []
+}
