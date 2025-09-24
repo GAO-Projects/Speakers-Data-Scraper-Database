@@ -9,21 +9,17 @@ interface UserPanelProps {
   onAddSpeaker: (speakerData: Omit<SpeakerData, 'id' | 'createdBy'>) => Promise<SpeakerData | null>;
   onUpdateSpeaker: (speakerData: SpeakerData) => Promise<void>;
   onDeleteSpeaker: (speakerId: string) => Promise<void>;
-  // FIX: Changed type to allow `createdBy` property, which is added during import.
   onBulkAddSpeakers: (speakers: Omit<SpeakerData, 'id'>[]) => Promise<{ importedCount: number; skippedCount: number; }>;
   currentUserEmail: string;
 }
 
-// A simple, predictable normalizer: lowercase and remove all whitespace.
 const normalizeKey = (key: string): string => {
     if (!key) return '';
     return key.toLowerCase().replace(/\s+/g, '');
 };
 
-// Creates an exhaustive mapping from various normalized header names to the correct SpeakerData keys.
 const getFieldMap = (): { [key: string]: keyof SpeakerData } => {
     const map: { [key: string]: keyof SpeakerData } = {};
-
     const aliases: { [alias: string]: keyof SpeakerData } = {
         'firstname': 'firstName', 'lastname': 'lastName', 'title': 'title', 'company': 'company',
         'businessemail': 'businessEmail', 'email': 'businessEmail', 'emailaddress': 'businessEmail',
@@ -39,11 +35,7 @@ const getFieldMap = (): { [key: string]: keyof SpeakerData } => {
         'speakingtopic': 'speakingTopic', 'speakinginfotopic': 'speakingTopic', 'speakinglink': 'speakingLink',
         'speakinginfolink': 'speakingLink', 'createdby': 'createdBy', 'id': 'id'
     };
-    
-    for (const alias in aliases) {
-        map[normalizeKey(alias)] = aliases[alias];
-    }
-    
+    for (const alias in aliases) { map[normalizeKey(alias)] = aliases[alias]; }
     return map;
 };
 const fieldMap = getFieldMap();
@@ -66,6 +58,8 @@ const UserPanel: React.FC<UserPanelProps> = ({ data, onAddSpeaker, onUpdateSpeak
   const [errors, setErrors] = useState<Partial<Record<keyof SpeakerData, string>>>({});
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const importFileRef = useRef<HTMLInputElement>(null);
+  const workerRef = useRef<Worker | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [filters, setFilters] = useState({ country: '', industry: '', company: '' });
@@ -78,6 +72,12 @@ const UserPanel: React.FC<UserPanelProps> = ({ data, onAddSpeaker, onUpdateSpeak
     'firstName', 'lastName', 'title', 'company', 'businessEmail',
     'country', 'website', 'speakingTopic', 'speakingLink'
   ];
+
+  useEffect(() => {
+    return () => {
+        workerRef.current?.terminate();
+    }
+  }, []);
 
   const openAddModal = () => {
     setEditingSpeaker(null);
@@ -160,24 +160,25 @@ const UserPanel: React.FC<UserPanelProps> = ({ data, onAddSpeaker, onUpdateSpeak
     }
   };
 
-  const handleExport = () => {
-    if (data.length === 0) {
-        setToast({ message: 'No speaker data to export.', type: 'error' });
-        return;
+  const handleExport = async () => {
+    if (isExporting) return;
+    setIsExporting(true);
+    setToast({ message: 'Preparing export...', type: 'success' });
+    try {
+        const blob = await api.exportUserSpeakers(currentUserEmail);
+        const link = document.createElement('a');
+        const url = URL.createObjectURL(blob);
+        link.setAttribute('href', url);
+        link.setAttribute('download', 'my_speaker_data.csv');
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    } catch(err) {
+        setToast({ message: 'Export failed. Please try again.', type: 'error' });
+    } finally {
+        setIsExporting(false);
     }
-
-    const csv = (window as any).Papa.unparse(data);
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', 'my_speaker_data_export.csv');
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-
-    setToast({ message: `Exported ${data.length} records.`, type: 'success' });
   };
   
   const handleImportClick = () => {
@@ -188,16 +189,21 @@ const UserPanel: React.FC<UserPanelProps> = ({ data, onAddSpeaker, onUpdateSpeak
     const file = event.target.files?.[0];
     if (!file) return;
 
-    (window as any).Papa.parse(file, {
-        header: true, skipEmptyLines: true,
-        complete: async (results: { data: { [key: string]: any }[] }) => {
-            if (!results.data || results.data.length === 0) {
-                setToast({ message: 'Import failed. CSV is empty.', type: 'error' });
-                if (event.target) event.target.value = '';
-                return;
-            }
+    setToast({ message: 'Parsing CSV file in the background...', type: 'success' });
+    
+    workerRef.current = new Worker(new URL('../workers/csv.worker.ts', import.meta.url), { type: 'module' });
+    
+    const allData: any[] = [];
 
-            const remappedData = results.data.map(row => {
+    workerRef.current.onmessage = async (e) => {
+        const { type, data, count, error } = e.data;
+
+        if (type === 'chunk') {
+            allData.push(...data);
+        } else if (type === 'complete') {
+            setToast({ message: `Parsing complete. Found ${count} records. Now preparing for import...`, type: 'success' });
+
+            const remappedData = allData.map(row => {
                 const newRow: { [key: string]: any } = {};
                 for (const header in row) {
                     const finalKey = fieldMap[normalizeKey(header)];
@@ -206,7 +212,6 @@ const UserPanel: React.FC<UserPanelProps> = ({ data, onAddSpeaker, onUpdateSpeak
                 return newRow as Partial<SpeakerData>;
             });
 
-            // FIX: Correctly type dataToImport to allow the `createdBy` property.
             const dataToImport: Omit<SpeakerData, 'id'>[] = [];
             for (const row of remappedData) {
                 if (row.businessEmail && String(row.businessEmail).trim()) {
@@ -240,13 +245,16 @@ const UserPanel: React.FC<UserPanelProps> = ({ data, onAddSpeaker, onUpdateSpeak
                 setToast({ message: 'Import failed. No rows with a valid "Business Email" found.', type: 'error' });
             }
 
+            workerRef.current?.terminate();
             if (event.target) event.target.value = '';
-        },
-        error: (error: Error) => {
-            setToast({ message: `Error parsing CSV: ${error.message}`, type: 'error' });
+
+        } else if (type === 'error') {
+            setToast({ message: `Error parsing CSV: ${error}`, type: 'error' });
+            workerRef.current?.terminate();
             if (event.target) event.target.value = '';
-        },
-    });
+        }
+    };
+    workerRef.current.postMessage(file);
   };
 
   const handlePasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -360,8 +368,8 @@ const UserPanel: React.FC<UserPanelProps> = ({ data, onAddSpeaker, onUpdateSpeak
            <button onClick={handleImportClick} type="button" className="inline-flex items-center justify-center rounded-md border border-transparent bg-slate-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2 focus:ring-offset-slate-900 sm:w-auto">
                 Import
            </button>
-            <button onClick={handleExport} type="button" className="inline-flex items-center justify-center rounded-md border border-transparent bg-slate-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2 focus:ring-offset-slate-900 sm:w-auto">
-                Export
+            <button onClick={handleExport} type="button" disabled={isExporting} className="inline-flex items-center justify-center rounded-md border border-transparent bg-slate-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2 focus:ring-offset-slate-900 sm:w-auto disabled:opacity-50">
+                {isExporting ? 'Exporting...' : 'Export'}
             </button>
           <button
             onClick={openAddModal}
