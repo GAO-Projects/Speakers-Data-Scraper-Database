@@ -4,7 +4,7 @@ import type { User, SpeakerData } from './types';
 const API_BASE_URL = '/api';
 
 // Helper function for all API requests
-async function apiFetch(endpoint: string, options: RequestInit = {}) {
+async function apiFetch(endpoint: string, options: RequestInit = {}, returnsBlob = false) {
   try {
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {
       ...options,
@@ -18,6 +18,10 @@ async function apiFetch(endpoint: string, options: RequestInit = {}) {
       // Try to parse error message from backend, otherwise use default
       const errorData = await response.json().catch(() => ({ message: `Request failed with status ${response.status}` }));
       throw new Error(errorData.message || `Request failed`);
+    }
+
+    if (returnsBlob) {
+        return response.blob();
     }
 
     // For DELETE or other methods that might not return a body (e.g., 204 No Content)
@@ -41,21 +45,21 @@ export const login = async (email: string, pass: string): Promise<User | null> =
       method: 'POST',
       body: JSON.stringify({ email, password: pass }),
     });
-    return user;
+    return user as User | null;
   } catch (error) {
     // Login is a special case where we want to return null on failure, not crash
     return null;
   }
 };
 
-export const getAllUsers = (): Promise<User[]> => apiFetch('/users');
+export const getAllUsers = (): Promise<User[]> => apiFetch('/users') as Promise<User[]>;
 
 export const addUser = (email: string, password?: string, isAdmin?: boolean): Promise<User & { password?: string }> => {
   // Password is now optional. Backend will generate if it's not provided.
   return apiFetch('/users', {
     method: 'POST',
     body: JSON.stringify({ email, password, isAdmin }),
-  });
+  }) as Promise<User & { password?: string }>;
 };
 
 export const updateUser = (originalEmail: string, updatedUser: User): Promise<User> => {
@@ -68,50 +72,53 @@ export const updateUser = (originalEmail: string, updatedUser: User): Promise<Us
   return apiFetch(`/users/${encodeURIComponent(originalEmail)}`, {
     method: 'PUT',
     body: JSON.stringify(payload),
-  });
+  }) as Promise<User>;
 };
 
 export const changePassword = (email: string, currentPassword: string, newPassword: string): Promise<{ message: string }> => {
     return apiFetch('/users/change-password', {
         method: 'PUT',
         body: JSON.stringify({ email, currentPassword, newPassword }),
-    });
+    }) as Promise<{ message: string }>;
 };
 
 export const deleteUser = (email: string): Promise<void> => {
-  return apiFetch(`/users/${encodeURIComponent(email)}`, { method: 'DELETE' });
+  return apiFetch(`/users/${encodeURIComponent(email)}`, { method: 'DELETE' }) as Promise<void>;
 };
 
+export const exportInterns = (): Promise<Blob> => {
+    return apiFetch('/users/export/interns', { method: 'GET' }, true) as Promise<Blob>;
+};
 
 // --- Speaker Data Management ---
 
 export const getSpeakerDataByUser = (email: string): Promise<SpeakerData[]> => {
-  return apiFetch(`/speakers/user/${encodeURIComponent(email)}`);
+  return apiFetch(`/speakers/user/${encodeURIComponent(email)}`) as Promise<SpeakerData[]>;
 };
 
-export const getAllSpeakerData = (): Promise<SpeakerData[]> => apiFetch('/speakers');
+export const getAllSpeakerData = (): Promise<SpeakerData[]> => apiFetch('/speakers') as Promise<SpeakerData[]>;
 
 export const addSpeakerData = (data: Omit<SpeakerData, 'id'>): Promise<SpeakerData> => {
   return apiFetch('/speakers', {
     method: 'POST',
     body: JSON.stringify(data),
-  });
+  }) as Promise<SpeakerData>;
 };
 
 export const updateSpeakerData = (data: SpeakerData): Promise<SpeakerData> => {
   return apiFetch(`/speakers/${data.id}`, {
     method: 'PUT',
     body: JSON.stringify(data),
-  });
+  }) as Promise<SpeakerData>;
 };
 
 export const deleteSpeakerData = (id: string): Promise<void> => {
-  return apiFetch(`/speakers/${id}`, { method: 'DELETE' });
+  return apiFetch(`/speakers/${id}`, { method: 'DELETE' }) as Promise<void>;
 };
 
 export const isBusinessEmailInUse = async (businessEmail: string, speakerIdToExclude?: string): Promise<boolean> => {
   const query = speakerIdToExclude ? `?exclude=${speakerIdToExclude}` : '';
-  const result = await apiFetch(`/speakers/email-check/${encodeURIComponent(businessEmail)}${query}`);
+  const result: {inUse: boolean} = await apiFetch(`/speakers/email-check/${encodeURIComponent(businessEmail)}${query}`) as {inUse: boolean};
   return result.inUse;
 };
 
@@ -119,5 +126,13 @@ export const bulkAddSpeakerData = (data: Omit<SpeakerData, 'id'>[]): Promise<{ i
   return apiFetch('/speakers/bulk', {
     method: 'POST',
     body: JSON.stringify(data),
-  });
+  }) as Promise<{ importedCount: number; skippedCount: number; }>;
+};
+
+export const exportAllSpeakers = (): Promise<Blob> => {
+    return apiFetch('/speakers/export', { method: 'GET' }, true) as Promise<Blob>;
+};
+
+export const exportUserSpeakers = (email: string): Promise<Blob> => {
+    return apiFetch(`/speakers/export/user/${encodeURIComponent(email)}`, { method: 'GET' }, true) as Promise<Blob>;
 };
