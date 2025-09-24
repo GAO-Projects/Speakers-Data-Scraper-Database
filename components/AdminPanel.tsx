@@ -3,6 +3,7 @@ import type { SpeakerData, User } from '../types';
 import * as api from '../mockApi';
 import Modal from './Modal';
 import Toast from './Toast';
+import Papa from 'papaparse';
 
 // A simple, predictable normalizer: lowercase and remove all whitespace.
 const normalizeKey = (key: string): string => {
@@ -191,6 +192,7 @@ const AdminPanel: React.FC<{ currentUser: User }> = ({ currentUser }) => {
         await api.deleteUser(userToDelete.email);
         setToast({ message: 'User deleted successfully.', type: 'success' });
         fetchUsers();
+        fetchSpeakers(); // Also refresh speakers to update total count
       } catch (err) {
         setToast({ message: 'Failed to delete user.', type: 'error' });
       } finally {
@@ -209,7 +211,7 @@ const AdminPanel: React.FC<{ currentUser: User }> = ({ currentUser }) => {
         return;
     }
 
-    const csv = (window as any).Papa.unparse(allSpeakers);
+    const csv = Papa.unparse(allSpeakers);
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
@@ -231,7 +233,7 @@ const AdminPanel: React.FC<{ currentUser: User }> = ({ currentUser }) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    (window as any).Papa.parse(file, {
+    Papa.parse(file, {
         header: true,
         skipEmptyLines: true,
         complete: async (results: { data: { [key: string]: any }[] }) => {
@@ -344,7 +346,7 @@ const AdminPanel: React.FC<{ currentUser: User }> = ({ currentUser }) => {
       return;
     }
 
-    const csv = (window as any).Papa.unparse(interns);
+    const csv = Papa.unparse(interns);
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
@@ -618,10 +620,17 @@ const AdminPanel: React.FC<{ currentUser: User }> = ({ currentUser }) => {
 
       {userToDelete && (
         <Modal isOpen={isDeleteUserModalOpen} onClose={() => setIsDeleteUserModalOpen(false)} title="Confirm Deletion">
-          <p className="text-slate-300">Are you sure you want to delete the user: {userToDelete.email}? This action cannot be undone.</p>
+          <div className="text-slate-300 space-y-3">
+            <p>Are you sure you want to delete the user: <strong className="text-white">{userToDelete.email}</strong>?</p>
+            <div className="bg-red-900/50 border border-red-700/50 p-3 rounded-md text-sm">
+                This will also permanently delete all <strong className="text-white">{speakerCountsByUser.get(userToDelete.email) || 0} speaker entries</strong> created by this user.
+                <br />
+                This action cannot be undone.
+            </div>
+          </div>
           <div className="pt-4 flex justify-end space-x-3">
             <button type="button" onClick={() => setIsDeleteUserModalOpen(false)} className="px-4 py-2 bg-slate-600 text-white font-semibold rounded-lg shadow-md hover:bg-slate-700">Cancel</button>
-            <button type="button" onClick={handleDeleteUser} className="px-4 py-2 bg-red-600 text-white font-semibold rounded-lg shadow-md hover:bg-red-700">Delete User</button>
+            <button type="button" onClick={handleDeleteUser} className="px-4 py-2 bg-red-600 text-white font-semibold rounded-lg shadow-md hover:bg-red-700">Delete User & Data</button>
           </div>
         </Modal>
       )}
