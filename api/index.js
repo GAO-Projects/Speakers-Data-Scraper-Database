@@ -5,6 +5,8 @@ const { Pool } = pkg;
 import crypto from 'crypto';
 
 const app = express();
+const apiRouter = express.Router(); // Create a new router
+
 app.use(cors()); // Enable Cross-Origin Resource Sharing
 app.use(express.json({ limit: '10mb' })); // Enable parsing of JSON bodies, increase limit for large CSVs
 
@@ -12,12 +14,10 @@ app.use(express.json({ limit: '10mb' })); // Enable parsing of JSON bodies, incr
 const connectionString = process.env.DATABASE_URL;
 let pool;
 
-// This is a more robust pattern for serverless environments.
-// We only initialize the pool if the connection string is present.
-// Otherwise, the API will gracefully fail with a helpful error message.
 if (!connectionString) {
     console.error("FATAL: DATABASE_URL environment variable is not set.");
-    app.use((req, res, next) => {
+    // This middleware will apply to the /api path since it's registered before the router
+    app.use('/api/*', (req, res, next) => {
       res.status(500).json({ 
         message: "Server is not configured correctly. The DATABASE_URL environment variable is missing. Please set it in your Vercel project settings." 
       });
@@ -31,7 +31,6 @@ if (!connectionString) {
     });
 }
 
-
 // --- HELPER FUNCTION ---
 const generateRandomPassword = (length = 10) => {
     return crypto.randomBytes(Math.ceil(length / 2))
@@ -41,22 +40,21 @@ const generateRandomPassword = (length = 10) => {
 
 
 // --- HEALTH CHECK / ROOT ENDPOINT ---
-// This will be accessible at /api
-app.get('/', (req, res) => {
+// This is now the root of the API router, accessible at /api/
+apiRouter.get('/', (req, res) => {
     res.status(200).json({ message: 'Scraping Data Speaker API is online and running.' });
 });
 
 
 // --- API ENDPOINTS ---
-// NOTE: The '/api' prefix is removed from all routes. Vercel's routing handles this.
+// All routes are now attached to apiRouter instead of app
 
 // User Login
-app.post('/auth/login', async (req, res) => {
+apiRouter.post('/auth/login', async (req, res) => {
     const { email, password } = req.body;
     try {
         const result = await pool.query('SELECT * FROM users WHERE email = $1 AND password = $2', [email, password]);
         if (result.rows.length > 0) {
-            // Don't send the password back to the client
             const { password: _, ...user } = result.rows[0];
             res.json(user);
         } else {
@@ -68,7 +66,7 @@ app.post('/auth/login', async (req, res) => {
 });
 
 // Get all users
-app.get('/users', async (req, res) => {
+apiRouter.get('/users', async (req, res) => {
     try {
         const result = await pool.query('SELECT email, "isAdmin" FROM users');
         res.json(result.rows);
@@ -78,7 +76,7 @@ app.get('/users', async (req, res) => {
 });
 
 // Add a new user (with automatic password generation)
-app.post('/users', async (req, res) => {
+apiRouter.post('/users', async (req, res) => {
     let { email, password, isAdmin } = req.body;
     
     if (!password) {
@@ -87,7 +85,6 @@ app.post('/users', async (req, res) => {
 
     try {
         const result = await pool.query('INSERT INTO users (email, password, "isAdmin") VALUES ($1, $2, $3) RETURNING *', [email, password, isAdmin]);
-        // Return the full user object including the generated password so the admin can see it
         res.status(201).json(result.rows[0]);
     } catch (err) {
         if (err.code === '23505') return res.status(409).json({ message: 'A user with this email already exists.' });
@@ -96,7 +93,7 @@ app.post('/users', async (req, res) => {
 });
 
 // Update a user (by admin)
-app.put('/users/:originalEmail', async (req, res) => {
+apiRouter.put('/users/:originalEmail', async (req, res) => {
     const { originalEmail } = req.params;
     const { email, password } = req.body;
     try {
@@ -114,7 +111,7 @@ app.put('/users/:originalEmail', async (req, res) => {
 });
 
 // Change own password (by user)
-app.put('/users/change-password', async (req, res) => {
+apiRouter.put('/users/change-password', async (req, res) => {
     const { email, currentPassword, newPassword } = req.body;
 
     if (!email || !currentPassword || !newPassword) {
@@ -122,14 +119,12 @@ app.put('/users/change-password', async (req, res) => {
     }
 
     try {
-        // First, verify the current password is correct
         const verifyResult = await pool.query('SELECT id FROM users WHERE email = $1 AND password = $2', [email, currentPassword]);
         
         if (verifyResult.rows.length === 0) {
             return res.status(401).json({ message: 'Incorrect current password.' });
         }
 
-        // If correct, update to the new password
         await pool.query('UPDATE users SET password = $1 WHERE email = $2', [newPassword, email]);
         
         res.status(200).json({ message: 'Password updated successfully.' });
@@ -141,7 +136,7 @@ app.put('/users/change-password', async (req, res) => {
 
 
 // Delete a user
-app.delete('/users/:email', async (req, res) => {
+apiRouter.delete('/users/:email', async (req, res) => {
     try {
         await pool.query('DELETE FROM users WHERE email = $1', [req.params.email]);
         res.status(204).send();
@@ -151,7 +146,7 @@ app.delete('/users/:email', async (req, res) => {
 });
 
 // Get all speaker data
-app.get('/speakers', async (req, res) => {
+apiRouter.get('/speakers', async (req, res) => {
     try {
         const result = await pool.query('SELECT * FROM speakers');
         res.json(result.rows);
@@ -161,7 +156,7 @@ app.get('/speakers', async (req, res) => {
 });
 
 // Get speaker data for a specific user
-app.get('/speakers/user/:email', async (req, res) => {
+apiRouter.get('/speakers/user/:email', async (req, res) => {
     try {
         const result = await pool.query('SELECT * FROM speakers WHERE "createdBy" = $1', [req.params.email]);
         res.json(result.rows);
@@ -171,7 +166,7 @@ app.get('/speakers/user/:email', async (req, res) => {
 });
 
 // Add new speaker data
-app.post('/speakers', async (req, res) => {
+apiRouter.post('/speakers', async (req, res) => {
     const s = req.body;
     const newId = `speaker-${Date.now()}-${Math.random()}`;
     const query = `
@@ -189,7 +184,7 @@ app.post('/speakers', async (req, res) => {
 });
 
 // Update speaker data
-app.put('/speakers/:id', async (req, res) => {
+apiRouter.put('/speakers/:id', async (req, res) => {
     const { id } = req.params;
     const s = req.body;
     const query = 'UPDATE speakers SET "firstName"=$1, "lastName"=$2, title=$3, company=$4, "businessEmail"=$5, country=$6, website=$7, "fullName"=$8, "isEmailValid"=$9, "isLinkedInValid"=$10, "isWebsiteValid"=$11, "extractedRole"=$12, "isCeo"=$13, "isSpeaker"=$14, "isAuthor"=$15, industry=$16, "personLinkedinUrl"=$17, stage=$18, "phoneNumber"=$19, employees=$20, location=$21, city=$22, state=$23, "companyAddress"=$24, "companyCity"=$25, "companyState"=$26, "companyCountry"=$27, "companyPhone"=$28, "secondaryEmail"=$29, "speakingTopic"=$30, "speakingLink"=$31 WHERE id=$32 RETURNING *';
@@ -203,7 +198,7 @@ app.put('/speakers/:id', async (req, res) => {
 });
 
 // Delete speaker data
-app.delete('/speakers/:id', async (req, res) => {
+apiRouter.delete('/speakers/:id', async (req, res) => {
     try {
         await pool.query('DELETE FROM speakers WHERE id = $1', [req.params.id]);
         res.status(204).send();
@@ -213,7 +208,7 @@ app.delete('/speakers/:id', async (req, res) => {
 });
 
 // Check if business email is in use
-app.get('/speakers/email-check/:email', async (req, res) => {
+apiRouter.get('/speakers/email-check/:email', async (req, res) => {
     const { exclude } = req.query; // speakerIdToExclude
     try {
         let result;
@@ -228,8 +223,8 @@ app.get('/speakers/email-check/:email', async (req, res) => {
     }
 });
 
-// Bulk add speakers - REFACTORED for performance and reliability
-app.post('/speakers/bulk', async (req, res) => {
+// Bulk add speakers
+apiRouter.post('/speakers/bulk', async (req, res) => {
     const speakers = req.body;
     if (!speakers || !Array.isArray(speakers) || speakers.length === 0) {
         return res.status(400).json({ message: 'No speaker data provided.' });
@@ -291,6 +286,8 @@ app.post('/speakers/bulk', async (req, res) => {
     }
 });
 
+// Mount the router on the /api path
+app.use('/api', apiRouter);
+
 // --- EXPORT APP FOR VERCEL ---
-// The Express app is exported as a module, which Vercel will use to create a serverless function.
 export default app;
