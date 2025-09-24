@@ -9,25 +9,28 @@ app.use(cors()); // Enable Cross-Origin Resource Sharing
 app.use(express.json({ limit: '10mb' })); // Enable parsing of JSON bodies, increase limit for large CSVs
 
 // --- DATABASE CONNECTION ---
-// The connection string is read from the DATABASE_URL environment variable.
-// You must set this variable in your Vercel project settings.
 const connectionString = process.env.DATABASE_URL;
+let pool;
 
-// If the database connection string is not available, the app is not configured.
-// We create a middleware to gracefully fail all API requests.
+// This is a more robust pattern for serverless environments.
+// We only initialize the pool if the connection string is present.
+// Otherwise, the API will gracefully fail with a helpful error message.
 if (!connectionString) {
     console.error("FATAL: DATABASE_URL environment variable is not set.");
     app.use((req, res, next) => {
-      res.status(500).json({ message: "Server is not configured correctly. Database connection string is missing." });
+      res.status(500).json({ 
+        message: "Server is not configured correctly. The DATABASE_URL environment variable is missing. Please set it in your Vercel project settings." 
+      });
+    });
+} else {
+    pool = new Pool({
+      connectionString,
+      ssl: {
+        rejectUnauthorized: false,
+      },
     });
 }
 
-const pool = new Pool({
-  connectionString,
-  ssl: {
-    rejectUnauthorized: false,
-  },
-});
 
 // --- HELPER FUNCTION ---
 const generateRandomPassword = (length = 10) => {
@@ -288,6 +291,6 @@ app.post('/speakers/bulk', async (req, res) => {
     }
 });
 
-export default function handler(req, res) {
-  return app(req, res); // delegate to Express
-}
+// --- EXPORT APP FOR VERCEL ---
+// The Express app is exported as a module, which Vercel will use to create a serverless function.
+export default app;
