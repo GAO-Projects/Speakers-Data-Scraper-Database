@@ -7,13 +7,18 @@ self.onmessage = (event: MessageEvent<File>) => {
     header: true,
     skipEmptyLines: true,
     worker: false, // We are already in a worker
+    transformHeader: (header) => {
+      // Remove BOM character if present and trim whitespace
+      const cleanedHeader = header.charCodeAt(0) === 0xFEFF ? header.slice(1) : header;
+      return cleanedHeader.trim();
+    },
     chunk: (results) => {
       // Post message back to the main thread with the chunk of data
-      // We transfer ownership of the data to avoid cloning, which is more efficient
       self.postMessage({ type: 'chunk', data: results.data });
     },
-    complete: () => {
-      self.postMessage({ type: 'complete' });
+    complete: (results) => {
+      // The `results.meta.cursor` gives the final row index, which is the total count.
+      self.postMessage({ type: 'complete', count: results.meta.cursor });
     },
     error: (error: Error) => {
       self.postMessage({ type: 'error', error: error.message });
