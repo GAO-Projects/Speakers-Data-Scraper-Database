@@ -11,25 +11,36 @@ app.use(cors()); // Enable Cross-Origin Resource Sharing
 app.use(express.json({ limit: '10mb' })); // Enable parsing of JSON bodies, increase limit for large CSVs
 
 // --- DATABASE CONNECTION ---
-const connectionString = process.env.DATABASE_URL;
+// Centralized pool creation. It's created once when the serverless function initializes.
 let pool;
-
-if (!connectionString) {
-    console.error("FATAL: DATABASE_URL environment variable is not set.");
-    // This middleware will apply to the /api path since it's registered before the router
-    app.use('/api/*', (req, res, next) => {
-      res.status(500).json({ 
-        message: "Server is not configured correctly. The DATABASE_URL environment variable is missing. Please set it in your Vercel project settings." 
-      });
-    });
-} else {
+try {
+    const connectionString = process.env.DATABASE_URL;
+    if (!connectionString) {
+        throw new Error("DATABASE_URL environment variable is not set.");
+    }
     pool = new Pool({
-      connectionString,
-      ssl: {
-        rejectUnauthorized: false,
-      },
+        connectionString,
+        ssl: {
+            rejectUnauthorized: false,
+        },
     });
+} catch (error) {
+    console.error("Failed to initialize database pool:", error.message);
+    // The pool remains undefined if initialization fails.
 }
+
+// --- DATABASE AVAILABILITY MIDDLEWARE ---
+// This middleware runs for every request to the API router.
+// It checks if the pool was successfully created.
+apiRouter.use((req, res, next) => {
+    if (!pool) {
+        return res.status(503).json({ 
+            message: "Database connection is not available. Please check server configuration." 
+        });
+    }
+    next();
+});
+
 
 // --- HELPER FUNCTION ---
 const generateRandomPassword = (length = 10) => {
@@ -47,7 +58,7 @@ apiRouter.get('/', (req, res) => {
 
 
 // --- API ENDPOINTS ---
-// All routes are now attached to apiRouter instead of app
+// All routes are now attached to apiRouter and can safely assume `pool` is available
 
 // User Login
 apiRouter.post('/auth/login', async (req, res) => {
@@ -136,13 +147,24 @@ apiRouter.put('/users/:originalEmail', async (req, res) => {
 });
 
 
-// Delete a user
+// Delete a user and all their associated speaker data in a transaction
 apiRouter.delete('/users/:email', async (req, res) => {
+    const { email } = req.params;
+    const client = await pool.connect();
     try {
-        await pool.query('DELETE FROM users WHERE email = $1', [req.params.email]);
+        await client.query('BEGIN');
+        // Delete speaker data created by the user
+        await client.query('DELETE FROM speakers WHERE "createdBy" = $1', [email]);
+        // Delete the user
+        await client.query('DELETE FROM users WHERE email = $1', [email]);
+        await client.query('COMMIT');
         res.status(204).send();
     } catch (err) {
-        res.status(500).json({ message: err.message });
+        await client.query('ROLLBACK');
+        console.error('Error in transaction for deleting user and data:', err);
+        res.status(500).json({ message: 'Failed to delete user and associated data. Operation was rolled back.' });
+    } finally {
+        client.release();
     }
 });
 
