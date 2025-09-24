@@ -3,6 +3,7 @@ import cors from 'cors';
 import pkg from 'pg';
 const { Pool } = pkg;
 import crypto from 'crypto';
+import Cursor from 'pg-cursor';
 
 const app = express();
 const apiRouter = express.Router(); // Create a new router
@@ -11,7 +12,6 @@ app.use(cors()); // Enable Cross-Origin Resource Sharing
 app.use(express.json({ limit: '10mb' })); // Enable parsing of JSON bodies, increase limit for large CSVs
 
 // --- DATABASE CONNECTION ---
-// Centralized pool creation. It's created once when the serverless function initializes.
 let pool;
 try {
     const connectionString = process.env.DATABASE_URL;
@@ -26,12 +26,9 @@ try {
     });
 } catch (error) {
     console.error("Failed to initialize database pool:", error.message);
-    // The pool remains undefined if initialization fails.
 }
 
 // --- DATABASE AVAILABILITY MIDDLEWARE ---
-// This middleware runs for every request to the API router.
-// It checks if the pool was successfully created.
 apiRouter.use((req, res, next) => {
     if (!pool) {
         return res.status(503).json({ 
@@ -42,23 +39,29 @@ apiRouter.use((req, res, next) => {
 });
 
 
-// --- HELPER FUNCTION ---
+// --- HELPER FUNCTIONS ---
 const generateRandomPassword = (length = 10) => {
     return crypto.randomBytes(Math.ceil(length / 2))
         .toString('hex')
         .slice(0, length);
 };
 
+const escapeCsvValue = (value) => {
+    if (value == null) return '';
+    const strValue = String(value);
+    if (strValue.includes(',') || strValue.includes('"') || strValue.includes('\n')) {
+        return `"${strValue.replace(/"/g, '""')}"`;
+    }
+    return strValue;
+};
 
 // --- HEALTH CHECK / ROOT ENDPOINT ---
-// This is now the root of the API router, accessible at /api/
 apiRouter.get('/', (req, res) => {
     res.status(200).json({ message: 'Scraping Data Speaker API is online and running.' });
 });
 
 
 // --- API ENDPOINTS ---
-// All routes are now attached to apiRouter and can safely assume `pool` is available
 
 // User Login
 apiRouter.post('/auth/login', async (req, res) => {
@@ -86,7 +89,7 @@ apiRouter.get('/users', async (req, res) => {
     }
 });
 
-// Add a new user (with automatic password generation)
+// Add a new user
 apiRouter.post('/users', async (req, res) => {
     let { email, password, isAdmin } = req.body;
     
@@ -103,8 +106,7 @@ apiRouter.post('/users', async (req, res) => {
     }
 });
 
-// Change own password (by user) - MOVED UP
-// This specific route must come BEFORE the parameterized route '/users/:originalEmail'
+// Change own password
 apiRouter.put('/users/change-password', async (req, res) => {
     const { email, currentPassword, newPassword } = req.body;
 
@@ -128,7 +130,7 @@ apiRouter.put('/users/change-password', async (req, res) => {
     }
 });
 
-// Update a user (by admin)
+// Update a user
 apiRouter.put('/users/:originalEmail', async (req, res) => {
     const { originalEmail } = req.params;
     const { email, password } = req.body;
@@ -147,15 +149,13 @@ apiRouter.put('/users/:originalEmail', async (req, res) => {
 });
 
 
-// Delete a user and all their associated speaker data in a transaction
+// Delete a user and their speaker data
 apiRouter.delete('/users/:email', async (req, res) => {
     const { email } = req.params;
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
-        // Delete speaker data created by the user
         await client.query('DELETE FROM speakers WHERE "createdBy" = $1', [email]);
-        // Delete the user
         await client.query('DELETE FROM users WHERE email = $1', [email]);
         await client.query('COMMIT');
         res.status(204).send();
@@ -167,6 +167,52 @@ apiRouter.delete('/users/:email', async (req, res) => {
         client.release();
     }
 });
+
+// Export interns data
+apiRouter.get('/users/export/interns', async (req, res) => {
+    const client = await pool.connect();
+    try {
+        const query = 'SELECT email, "isAdmin" FROM users WHERE "isAdmin" = false';
+        const cursor = client.query(new Cursor(query));
+        
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', 'attachment; filename="interns_export.csv"');
+        
+        const headers = ['email', 'role'];
+        res.write(headers.join(',') + '\n');
+
+        const readNextBatch = () => {
+            cursor.read(100, (err, rows) => {
+                if (err) {
+                    console.error('Error reading from cursor:', err);
+                    if (!res.headersSent) res.status(500).send('Error exporting data');
+                    client.release();
+                    return;
+                }
+
+                if (rows.length === 0) {
+                    res.end();
+                    client.release();
+                    return;
+                }
+
+                const csvRows = rows.map(row => {
+                    return [escapeCsvValue(row.email), 'Intern'].join(',');
+                }).join('\n');
+                
+                res.write(csvRows + '\n', 'utf-8', readNextBatch);
+            });
+        };
+        
+        readNextBatch();
+
+    } catch (err) {
+        console.error('Export interns error:', err);
+        if (!res.headersSent) res.status(500).send('Error starting export');
+        client.release();
+    }
+});
+
 
 // Get all speaker data
 apiRouter.get('/speakers', async (req, res) => {
@@ -246,14 +292,13 @@ apiRouter.get('/speakers/email-check/:email', async (req, res) => {
     }
 });
 
-// Bulk add speakers - REFACTORED for performance and reliability
+// Bulk add speakers
 apiRouter.post('/speakers/bulk', async (req, res) => {
     const speakers = req.body;
     if (!speakers || !Array.isArray(speakers) || speakers.length === 0) {
         return res.status(400).json({ message: 'No speaker data provided.' });
     }
 
-    // De-duplicate the incoming array based on businessEmail, keeping the first occurrence.
     const seenEmails = new Set();
     const uniqueSpeakers = speakers.filter(s => {
         if (!s.businessEmail) return false;
@@ -269,10 +314,10 @@ apiRouter.post('/speakers/bulk', async (req, res) => {
     
     const client = await pool.connect();
     try {
-        await client.query('BEGIN'); // Start transaction
+        await client.query('BEGIN');
 
         let totalImportedCount = 0;
-        const batchSize = 200; // Process 200 records at a time to avoid parameter limit
+        const batchSize = 200;
 
         for (let i = 0; i < uniqueSpeakers.length; i += batchSize) {
             const batch = uniqueSpeakers.slice(i, i + batchSize);
@@ -303,21 +348,118 @@ apiRouter.post('/speakers/bulk', async (req, res) => {
             totalImportedCount += result.rowCount;
         }
         
-        await client.query('COMMIT'); // Commit the transaction
+        await client.query('COMMIT');
         
         const skippedCount = speakers.length - totalImportedCount;
 
         res.json({ importedCount: totalImportedCount, skippedCount });
 
     } catch (err) {
-        await client.query('ROLLBACK'); // Rollback on any error
-        console.error('Bulk import transaction failed:', {
-            message: err.message,
-            code: err.code,
-            detail: err.detail,
-        });
+        await client.query('ROLLBACK');
+        console.error('Bulk import transaction failed:', err);
         res.status(500).json({ message: 'An error occurred during the import. The operation was rolled back.' });
     } finally {
+        client.release();
+    }
+});
+
+// Export all speaker data
+apiRouter.get('/speakers/export', async (req, res) => {
+    const client = await pool.connect();
+    try {
+        const query = 'SELECT * FROM speakers';
+        const cursor = client.query(new Cursor(query));
+
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', 'attachment; filename="speaker_data_export.csv"');
+        
+        let isFirstBatch = true;
+
+        const readNextBatch = () => {
+            cursor.read(100, (err, rows) => {
+                if (err) {
+                    console.error('Error reading from cursor:', err);
+                    if (!res.headersSent) res.status(500).send('Error exporting data');
+                    client.release();
+                    return;
+                }
+
+                if (rows.length === 0) {
+                    res.end();
+                    client.release();
+                    return;
+                }
+
+                if (isFirstBatch) {
+                    const headers = Object.keys(rows[0]);
+                    res.write(headers.join(',') + '\n');
+                    isFirstBatch = false;
+                }
+
+                const csvRows = rows.map(row => 
+                    Object.values(row).map(escapeCsvValue).join(',')
+                ).join('\n');
+                
+                res.write(csvRows + '\n', 'utf-8', readNextBatch);
+            });
+        };
+        
+        readNextBatch();
+
+    } catch (err) {
+        console.error('Export speakers error:', err);
+        if (!res.headersSent) res.status(500).send('Error starting export');
+        client.release();
+    }
+});
+
+// Export speaker data for a specific user
+apiRouter.get('/speakers/export/user/:email', async (req, res) => {
+    const { email } = req.params;
+    const client = await pool.connect();
+    try {
+        const query = 'SELECT * FROM speakers WHERE "createdBy" = $1';
+        const cursor = client.query(new Cursor(query, [email]));
+
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', `attachment; filename="speaker_data_${email}.csv"`);
+        
+        let isFirstBatch = true;
+
+        const readNextBatch = () => {
+            cursor.read(100, (err, rows) => {
+                if (err) {
+                    console.error('Error reading from cursor:', err);
+                    if (!res.headersSent) res.status(500).send('Error exporting data');
+                    client.release();
+                    return;
+                }
+
+                if (rows.length === 0) {
+                    res.end();
+                    client.release();
+                    return;
+                }
+
+                if (isFirstBatch && rows.length > 0) {
+                    const headers = Object.keys(rows[0]);
+                    res.write(headers.join(',') + '\n');
+                    isFirstBatch = false;
+                }
+
+                const csvRows = rows.map(row => 
+                    Object.values(row).map(escapeCsvValue).join(',')
+                ).join('\n');
+                
+                res.write(csvRows + '\n', 'utf-8', readNextBatch);
+            });
+        };
+        
+        readNextBatch();
+
+    } catch (err) {
+        console.error('Export user speakers error:', err);
+        if (!res.headersSent) res.status(500).send('Error starting export');
         client.release();
     }
 });
