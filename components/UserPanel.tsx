@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import type { SpeakerData } from '../types';
 import * as api from '../mockApi';
 import Modal from './Modal';
@@ -9,36 +9,8 @@ interface UserPanelProps {
   onAddSpeaker: (speakerData: Omit<SpeakerData, 'id' | 'createdBy'>) => Promise<SpeakerData | null>;
   onUpdateSpeaker: (speakerData: SpeakerData) => Promise<void>;
   onDeleteSpeaker: (speakerId: string) => Promise<void>;
-  onBulkAddSpeakers: (speakers: Omit<SpeakerData, 'id'>[]) => Promise<{ importedCount: number; skippedCount: number; }>;
   currentUserEmail: string;
 }
-
-const normalizeKey = (key: string): string => {
-    if (!key) return '';
-    return key.toLowerCase().replace(/\s+/g, '');
-};
-
-const getFieldMap = (): { [key: string]: keyof SpeakerData } => {
-    const map: { [key: string]: keyof SpeakerData } = {};
-    const aliases: { [alias: string]: keyof SpeakerData } = {
-        'firstname': 'firstName', 'lastname': 'lastName', 'title': 'title', 'company': 'company',
-        'businessemail': 'businessEmail', 'email': 'businessEmail', 'emailaddress': 'businessEmail',
-        'workemail': 'businessEmail', 'country': 'country', 'website': 'website', 'fullname': 'fullName',
-        'emailvalid': 'isEmailValid', 'isemailvalid': 'isEmailValid', 'linkedvalid': 'isLinkedInValid',
-        'islinkedinvalid': 'isLinkedInValid', 'websitevalid': 'isWebsiteValid', 'iswebsitevalid': 'isWebsiteValid',
-        'extractedrole': 'extractedRole', 'isceo': 'isCeo', 'isspeaker': 'isSpeaker', 'isauthor': 'isAuthor',
-        'industry': 'industry', 'personlinkedinurl': 'personLinkedinUrl', 'linkedin': 'personLinkedinUrl',
-        'linkedinurl': 'personLinkedinUrl', 'stage': 'stage', 'phonenumber': 'phoneNumber', 'phone': 'phoneNumber',
-        'employees': 'employees', 'location': 'location', 'city': 'city', 'state': 'state',
-        'companyaddress': 'companyAddress', 'companycity': 'companyCity', 'companystate': 'companyState',
-        'companycountry': 'companyCountry', 'companyphone': 'companyPhone', 'secondaryemail': 'secondaryEmail',
-        'speakingtopic': 'speakingTopic', 'speakinginfotopic': 'speakingTopic', 'speakinglink': 'speakingLink',
-        'speakinginfolink': 'speakingLink', 'createdby': 'createdBy', 'id': 'id'
-    };
-    for (const alias in aliases) { map[normalizeKey(alias)] = aliases[alias]; }
-    return map;
-};
-const fieldMap = getFieldMap();
 
 const getInitialFormData = (): Omit<SpeakerData, 'id' | 'createdBy'> => ({
   firstName: '', lastName: '', title: '', company: '', businessEmail: '',
@@ -51,15 +23,12 @@ const getInitialFormData = (): Omit<SpeakerData, 'id' | 'createdBy'> => ({
   speakingTopic: '', speakingLink: ''
 });
 
-const UserPanel: React.FC<UserPanelProps> = ({ data, onAddSpeaker, onUpdateSpeaker, onDeleteSpeaker, onBulkAddSpeakers, currentUserEmail }) => {
+const UserPanel: React.FC<UserPanelProps> = ({ data, onAddSpeaker, onUpdateSpeaker, onDeleteSpeaker, currentUserEmail }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingSpeaker, setEditingSpeaker] = useState<SpeakerData | null>(null);
   const [formData, setFormData] = useState(getInitialFormData());
   const [errors, setErrors] = useState<Partial<Record<keyof SpeakerData, string>>>({});
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
-  const importFileRef = useRef<HTMLInputElement>(null);
-  const workerRef = useRef<Worker | null>(null);
-  const [isExporting, setIsExporting] = useState(false);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [filters, setFilters] = useState({ country: '', industry: '', company: '' });
@@ -72,12 +41,6 @@ const UserPanel: React.FC<UserPanelProps> = ({ data, onAddSpeaker, onUpdateSpeak
     'firstName', 'lastName', 'title', 'company', 'businessEmail',
     'country', 'website', 'speakingTopic', 'speakingLink'
   ];
-
-  useEffect(() => {
-    return () => {
-        workerRef.current?.terminate();
-    }
-  }, []);
 
   const openAddModal = () => {
     setEditingSpeaker(null);
@@ -158,103 +121,6 @@ const UserPanel: React.FC<UserPanelProps> = ({ data, onAddSpeaker, onUpdateSpeak
         await onDeleteSpeaker(speakerId);
         setToast({ message: 'Speaker deleted.', type: 'success' });
     }
-  };
-
-  const handleExport = async () => {
-    if (isExporting) return;
-    setIsExporting(true);
-    setToast({ message: 'Preparing export...', type: 'success' });
-    try {
-        const blob = await api.exportUserSpeakers(currentUserEmail);
-        const link = document.createElement('a');
-        const url = URL.createObjectURL(blob);
-        link.setAttribute('href', url);
-        link.setAttribute('download', 'my_speaker_data.csv');
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-    } catch(err) {
-        setToast({ message: 'Export failed. Please try again.', type: 'error' });
-    } finally {
-        setIsExporting(false);
-    }
-  };
-  
-  const handleImportClick = () => {
-    importFileRef.current?.click();
-  };
-
-  const handleFileImport = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    setToast({ message: 'Parsing CSV file in the background...', type: 'success' });
-    
-    workerRef.current = new Worker(new URL('../workers/csv.worker.ts', import.meta.url), { type: 'module' });
-    
-    const allData: any[] = [];
-
-    workerRef.current.onmessage = async (e) => {
-        const { type, data, count, error } = e.data;
-
-        if (type === 'chunk') {
-            allData.push(...data);
-        } else if (type === 'complete') {
-            setToast({ message: `Parsing complete. Found ${count} records. Now preparing for import...`, type: 'success' });
-
-            const remappedData = allData.map(row => {
-                const newRow: { [key: string]: any } = {};
-                for (const header in row) {
-                    const finalKey = fieldMap[normalizeKey(header)];
-                    if (finalKey) newRow[finalKey] = row[header];
-                }
-                return newRow as Partial<SpeakerData>;
-            });
-
-            const dataToImport: Omit<SpeakerData, 'id'>[] = [];
-            for (const row of remappedData) {
-                if (row.businessEmail && String(row.businessEmail).trim()) {
-                    const getBool = (key: keyof SpeakerData) => ['true', '1', 'yes'].includes(String(row[key] ?? '').toLowerCase());
-                    dataToImport.push({
-                      createdBy: currentUserEmail,
-                      firstName: row.firstName || '', lastName: row.lastName || '', title: row.title || '', company: row.company || '',
-                      businessEmail: row.businessEmail, country: row.country || '', website: row.website || '',
-                      fullName: row.fullName || `${row.firstName || ''} ${row.lastName || ''}`.trim(), extractedRole: row.extractedRole || '',
-                      industry: row.industry || '', personLinkedinUrl: row.personLinkedinUrl || '', stage: row.stage || '', phoneNumber: row.phoneNumber || '',
-                      employees: row.employees || '', location: row.location || '', city: row.city || '', state: row.state || '',
-                      companyAddress: row.companyAddress || '', companyCity: row.companyCity || '', companyState: row.companyState || '',
-                      companyCountry: row.companyCountry || '', companyPhone: row.companyPhone || '', secondaryEmail: row.secondaryEmail || '',
-                      speakingTopic: row.speakingTopic || '', speakingLink: row.speakingLink || '', isEmailValid: getBool('isEmailValid'),
-                      isLinkedInValid: getBool('isLinkedInValid'), isWebsiteValid: getBool('isWebsiteValid'), isCeo: getBool('isCeo'),
-                      isSpeaker: getBool('isSpeaker'), isAuthor: getBool('isAuthor'),
-                    });
-                }
-            }
-            
-            if (dataToImport.length > 0) {
-                setToast({ message: `Importing ${dataToImport.length} valid records...`, type: 'success' });
-                try {
-                    const result = await onBulkAddSpeakers(dataToImport);
-                    setToast({ message: `Import complete. Added ${result.importedCount}, skipped ${result.skippedCount} duplicates.`, type: 'success' });
-                } catch (error) {
-                    const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred during import.';
-                    setToast({ message: `Import failed: ${errorMessage}`, type: 'error' });
-                }
-            } else {
-                setToast({ message: 'Import failed. No rows with a valid "Business Email" found.', type: 'error' });
-            }
-
-            workerRef.current?.terminate();
-            if (event.target) event.target.value = '';
-
-        } else if (type === 'error') {
-            setToast({ message: `Error parsing CSV: ${error}`, type: 'error' });
-            workerRef.current?.terminate();
-            if (event.target) event.target.value = '';
-        }
-    };
-    workerRef.current.postMessage(file);
   };
 
   const handlePasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -352,7 +218,6 @@ const UserPanel: React.FC<UserPanelProps> = ({ data, onAddSpeaker, onUpdateSpeak
 
   return (
     <div className="p-4 sm:p-6 lg:p-8">
-       <input type="file" ref={importFileRef} className="hidden" accept=".csv" onChange={handleFileImport} />
        {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
       <div className="sm:flex sm:items-center sm:justify-between">
         <div className="sm:flex-auto">
@@ -364,12 +229,6 @@ const UserPanel: React.FC<UserPanelProps> = ({ data, onAddSpeaker, onUpdateSpeak
         <div className="mt-4 sm:mt-0 sm:ml-16 sm:flex-none flex items-center space-x-2">
            <button onClick={() => setIsProfileModalOpen(true)} type="button" className="inline-flex items-center justify-center rounded-md border border-slate-500 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2 focus:ring-offset-slate-900 sm:w-auto">
                 Profile
-            </button>
-           <button onClick={handleImportClick} type="button" className="inline-flex items-center justify-center rounded-md border border-transparent bg-slate-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2 focus:ring-offset-slate-900 sm:w-auto">
-                Import
-           </button>
-            <button onClick={handleExport} type="button" disabled={isExporting} className="inline-flex items-center justify-center rounded-md border border-transparent bg-slate-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2 focus:ring-offset-slate-900 sm:w-auto disabled:opacity-50">
-                {isExporting ? 'Exporting...' : 'Export'}
             </button>
           <button
             onClick={openAddModal}
