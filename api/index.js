@@ -246,13 +246,14 @@ apiRouter.get('/speakers/email-check/:email', async (req, res) => {
     }
 });
 
-// Bulk add speakers
+// Bulk add speakers - REFACTORED for performance and reliability
 apiRouter.post('/speakers/bulk', async (req, res) => {
     const speakers = req.body;
     if (!speakers || !Array.isArray(speakers) || speakers.length === 0) {
         return res.status(400).json({ message: 'No speaker data provided.' });
     }
 
+    // De-duplicate the incoming array based on businessEmail, keeping the first occurrence.
     const seenEmails = new Set();
     const uniqueSpeakers = speakers.filter(s => {
         if (!s.businessEmail) return false;
@@ -268,36 +269,48 @@ apiRouter.post('/speakers/bulk', async (req, res) => {
     
     const client = await pool.connect();
     try {
-        const valuesClause = [];
-        const queryParams = [];
-        let paramIndex = 1;
+        await client.query('BEGIN'); // Start transaction
 
-        uniqueSpeakers.forEach(s => {
-            const newId = `speaker-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
-            const rowParams = [
-                newId, s.createdBy, s.firstName, s.lastName, s.title, s.company, s.businessEmail, s.country, s.website, s.fullName, s.isEmailValid, s.isLinkedInValid, s.isWebsiteValid, s.extractedRole, s.isCeo, s.isSpeaker, s.isAuthor, s.industry, s.personLinkedinUrl, s.stage, s.phoneNumber, s.employees, s.location, s.city, s.state, s.companyAddress, s.companyCity, s.companyState, s.companyCountry, s.companyPhone, s.secondaryEmail, s.speakingTopic, s.speakingLink
-            ];
+        let totalImportedCount = 0;
+        const batchSize = 200; // Process 200 records at a time to avoid parameter limit
+
+        for (let i = 0; i < uniqueSpeakers.length; i += batchSize) {
+            const batch = uniqueSpeakers.slice(i, i + batchSize);
             
-            const paramPlaceholders = rowParams.map(() => `$${paramIndex++}`);
-            valuesClause.push(`(${paramPlaceholders.join(', ')})`);
-            queryParams.push(...rowParams);
-        });
-        
-        const query = `
-            INSERT INTO speakers (id, "createdBy", "firstName", "lastName", title, company, "businessEmail", country, website, "fullName", "isEmailValid", "isLinkedInValid", "isWebsiteValid", "extractedRole", "isCeo", "isSpeaker", "isAuthor", industry, "personLinkedinUrl", stage, "phoneNumber", employees, location, city, state, "companyAddress", "companyCity", "companyState", "companyCountry", "companyPhone", "secondaryEmail", "speakingTopic", "speakingLink")
-            VALUES ${valuesClause.join(', ')}
-            ON CONFLICT ("businessEmail") DO NOTHING
-            RETURNING id;
-        `;
-        
-        const result = await client.query(query, queryParams);
-        
-        const importedCount = result.rowCount;
-        const skippedCount = speakers.length - importedCount;
+            const valuesClause = [];
+            const queryParams = [];
+            let paramIndex = 1;
 
-        res.json({ importedCount, skippedCount });
+            batch.forEach(s => {
+                const newId = `speaker-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+                const rowParams = [
+                    newId, s.createdBy, s.firstName, s.lastName, s.title, s.company, s.businessEmail, s.country, s.website, s.fullName, s.isEmailValid, s.isLinkedInValid, s.isWebsiteValid, s.extractedRole, s.isCeo, s.isSpeaker, s.isAuthor, s.industry, s.personLinkedinUrl, s.stage, s.phoneNumber, s.employees, s.location, s.city, s.state, s.companyAddress, s.companyCity, s.companyState, s.companyCountry, s.companyPhone, s.secondaryEmail, s.speakingTopic, s.speakingLink
+                ];
+                
+                const paramPlaceholders = rowParams.map(() => `$${paramIndex++}`);
+                valuesClause.push(`(${paramPlaceholders.join(', ')})`);
+                queryParams.push(...rowParams);
+            });
+
+            const query = `
+                INSERT INTO speakers (id, "createdBy", "firstName", "lastName", title, company, "businessEmail", country, website, "fullName", "isEmailValid", "isLinkedInValid", "isWebsiteValid", "extractedRole", "isCeo", "isSpeaker", "isAuthor", industry, "personLinkedinUrl", stage, "phoneNumber", employees, location, city, state, "companyAddress", "companyCity", "companyState", "companyCountry", "companyPhone", "secondaryEmail", "speakingTopic", "speakingLink")
+                VALUES ${valuesClause.join(', ')}
+                ON CONFLICT ("businessEmail") DO NOTHING
+                RETURNING id;
+            `;
+            
+            const result = await client.query(query, queryParams);
+            totalImportedCount += result.rowCount;
+        }
+        
+        await client.query('COMMIT'); // Commit the transaction
+        
+        const skippedCount = speakers.length - totalImportedCount;
+
+        res.json({ importedCount: totalImportedCount, skippedCount });
 
     } catch (err) {
+        await client.query('ROLLBACK'); // Rollback on any error
         console.error('Bulk import transaction failed:', {
             message: err.message,
             code: err.code,
