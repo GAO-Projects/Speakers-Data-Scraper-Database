@@ -619,25 +619,49 @@ const AdminPanel: React.FC<{ currentUser: User }> = ({ currentUser }) => {
       )}
 
       {userToDelete && (
-        <Modal isOpen={isDeleteUserModalOpen} onClose={() => setIsDeleteUserModalOpen(false)} title={`Confirm Deletion of ${userToDelete.email}`}>
-          <div className="text-slate-300 space-y-4">
-            <p>Please confirm that you want to delete the user account for <strong className="text-white">{userToDelete.email}</strong>.</p>
-            <div className="bg-slate-700/50 border border-slate-600 p-4 rounded-lg text-sm">
-                <h4 className="font-bold text-amber-400 mb-2">Data Preservation Notice</h4>
-                <ul className="list-disc list-inside space-y-1">
-                    <li>The user account will be <strong className="text-red-400">permanently deleted</strong>.</li>
-                    <li>
-                        All <strong className="text-white">{speakerCountsByUser.get(userToDelete.email) || 0} speaker entries</strong> created by this user 
-                        will be <strong className="text-green-400">preserved</strong> and remain in the database.
-                    </li>
-                </ul>
-                <p className="mt-3 text-xs text-slate-400">This action cannot be undone.</p>
+        <Modal isOpen={isDeleteUserModalOpen} onClose={() => setIsDeleteUserModalOpen(false)} title="Confirm User Deletion">
+            <div className="text-slate-300 space-y-4">
+                <p>Are you sure you want to delete the user account for <strong className="text-white">{userToDelete.email}</strong>?</p>
+                
+                {/* Deletion Warning Box */}
+                <div className="bg-red-900/40 border border-red-700/60 p-3 rounded-lg">
+                    <div className="flex items-start">
+                        <div className="flex-shrink-0">
+                            <svg className="h-5 w-5 text-red-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                            </svg>
+                        </div>
+                        <div className="ml-3">
+                            <h4 className="font-semibold text-red-300">What will be deleted</h4>
+                            <p className="text-sm text-red-300/90 mt-1">
+                                The user account for <strong className="font-bold text-white">{userToDelete.email}</strong> will be permanently removed.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Preservation Notice Box */}
+                <div className="bg-green-900/40 border border-green-700/60 p-3 rounded-lg">
+                    <div className="flex items-start">
+                        <div className="flex-shrink-0">
+                           <svg className="h-5 w-5 text-green-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                            </svg>
+                        </div>
+                        <div className="ml-3">
+                            <h4 className="font-semibold text-green-300">What will be preserved</h4>
+                            <p className="text-sm text-green-300/90 mt-1">
+                                All <strong className="font-bold text-white">{speakerCountsByUser.get(userToDelete.email) || 0} speaker entries</strong> created by this user will be kept in the database.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+                 <p className="mt-4 text-sm text-slate-400">This action cannot be undone. Are you sure you wish to proceed?</p>
             </div>
-          </div>
-          <div className="pt-5 flex justify-end space-x-3">
-            <button type="button" onClick={() => setIsDeleteUserModalOpen(false)} className="px-4 py-2 bg-slate-600 text-white font-semibold rounded-lg shadow-md hover:bg-slate-700">Cancel</button>
-            <button type="button" onClick={handleDeleteUser} className="px-4 py-2 bg-red-600 text-white font-semibold rounded-lg shadow-md hover:bg-red-700">Yes, Delete User</button>
-          </div>
+            <div className="pt-5 flex justify-end space-x-3">
+                <button type="button" onClick={() => setIsDeleteUserModalOpen(false)} className="px-4 py-2 bg-slate-600 text-white font-semibold rounded-lg shadow-md hover:bg-slate-700">Cancel</button>
+                <button type="button" onClick={handleDeleteUser} className="px-4 py-2 bg-red-600 text-white font-semibold rounded-lg shadow-md hover:bg-red-700">Delete User Account</button>
+            </div>
         </Modal>
       )}
 
