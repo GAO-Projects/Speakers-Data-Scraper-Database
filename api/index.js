@@ -147,24 +147,16 @@ apiRouter.put('/users/:originalEmail', async (req, res) => {
 });
 
 
-// Delete a user and all their associated speaker data in a transaction
+// Delete a user
 apiRouter.delete('/users/:email', async (req, res) => {
     const { email } = req.params;
-    const client = await pool.connect();
     try {
-        await client.query('BEGIN');
-        // Delete speaker data created by the user
-        await client.query('DELETE FROM speakers WHERE "createdBy" = $1', [email]);
-        // Delete the user
-        await client.query('DELETE FROM users WHERE email = $1', [email]);
-        await client.query('COMMIT');
+        // Only delete the user. Speaker entries created by them will remain.
+        await pool.query('DELETE FROM users WHERE email = $1', [email]);
         res.status(204).send();
     } catch (err) {
-        await client.query('ROLLBACK');
-        console.error('Error in transaction for deleting user and data:', err);
-        res.status(500).json({ message: 'Failed to delete user and associated data. Operation was rolled back.' });
-    } finally {
-        client.release();
+        console.error('Error deleting user:', err);
+        res.status(500).json({ message: 'Failed to delete user.' });
     }
 });
 
