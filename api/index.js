@@ -3,8 +3,6 @@ import cors from 'cors';
 import pkg from 'pg';
 const { Pool } = pkg;
 import crypto from 'crypto';
-import Cursor from 'pg-cursor';
-import Papa from 'papaparse';
 
 const app = express();
 const apiRouter = express.Router(); // Create a new router
@@ -13,6 +11,7 @@ app.use(cors()); // Enable Cross-Origin Resource Sharing
 app.use(express.json({ limit: '10mb' })); // Enable parsing of JSON bodies, increase limit for large CSVs
 
 // --- DATABASE CONNECTION ---
+// Centralized pool creation. It's created once when the serverless function initializes.
 let pool;
 try {
     const connectionString = process.env.DATABASE_URL;
@@ -27,9 +26,12 @@ try {
     });
 } catch (error) {
     console.error("Failed to initialize database pool:", error.message);
+    // The pool remains undefined if initialization fails.
 }
 
 // --- DATABASE AVAILABILITY MIDDLEWARE ---
+// This middleware runs for every request to the API router.
+// It checks if the pool was successfully created.
 apiRouter.use((req, res, next) => {
     if (!pool) {
         return res.status(503).json({ 
@@ -40,67 +42,23 @@ apiRouter.use((req, res, next) => {
 });
 
 
-// --- HELPER FUNCTIONS ---
+// --- HELPER FUNCTION ---
 const generateRandomPassword = (length = 10) => {
     return crypto.randomBytes(Math.ceil(length / 2))
         .toString('hex')
         .slice(0, length);
 };
 
-const escapeCsvValue = (value) => {
-    if (value == null) return '';
-    const strValue = String(value);
-    if (strValue.includes(',') || strValue.includes('"') || strValue.includes('\n')) {
-        return `"${strValue.replace(/"/g, '""')}"`;
-    }
-    return strValue;
-};
-
-// A simple, predictable normalizer: lowercase and remove all whitespace.
-const normalizeKey = (key) => {
-    if (!key) return '';
-    return key.toLowerCase().replace(/\s+/g, '');
-};
-
-// Creates an exhaustive mapping from various normalized header names to the correct SpeakerData keys.
-const getFieldMap = () => {
-    const map = {};
-
-    const aliases = {
-        // Main Aliases
-        'firstname': 'firstName', 'lastname': 'lastName', 'title': 'title', 'company': 'company',
-        'businessemail': 'businessEmail', 'email': 'businessEmail', 'emailaddress': 'businessEmail',
-        'workemail': 'businessEmail', 'country': 'country', 'website': 'website', 'fullname': 'fullName',
-        'emailvalid': 'isEmailValid', 'isemailvalid': 'isEmailValid', 'linkedvalid': 'isLinkedInValid',
-        'islinkedinvalid': 'isLinkedInValid', 'websitevalid': 'isWebsiteValid', 'iswebsitevalid': 'isWebsiteValid',
-        'extractedrole': 'extractedRole', 'isceo': 'isCeo', 'isspeaker': 'isSpeaker', 'isauthor': 'isAuthor',
-        'industry': 'industry', 'personlinkedinurl': 'personLinkedinUrl', 'linkedin': 'personLinkedinUrl',
-        'linkedinurl': 'personLinkedinUrl', 'stage': 'stage', 'phonenumber': 'phoneNumber', 'phone': 'phoneNumber',
-        'employees': 'employees', 'location': 'location', 'city': 'city', 'state': 'state',
-        'companyaddress': 'companyAddress', 'companycity': 'companyCity', 'companystate': 'companyState',
-        'companycountry': 'companyCountry', 'companyphone': 'companyPhone', 'secondaryemail': 'secondaryEmail',
-        'speakingtopic': 'speakingTopic', 'speakinginfotopic': 'speakingTopic', 'speakinglink': 'speakingLink',
-        'speakinginfolink': 'speakingLink', 'createdby': 'createdBy', 'id': 'id'
-    };
-    
-    for (const alias in aliases) {
-        map[normalizeKey(alias)] = aliases[alias];
-    }
-    
-    return map;
-};
-
-// Generate the map once for efficiency
-const fieldMap = getFieldMap();
-
 
 // --- HEALTH CHECK / ROOT ENDPOINT ---
+// This is now the root of the API router, accessible at /api/
 apiRouter.get('/', (req, res) => {
     res.status(200).json({ message: 'Scraping Data Speaker API is online and running.' });
 });
 
 
 // --- API ENDPOINTS ---
+// All routes are now attached to apiRouter and can safely assume `pool` is available
 
 // User Login
 apiRouter.post('/auth/login', async (req, res) => {
@@ -128,7 +86,7 @@ apiRouter.get('/users', async (req, res) => {
     }
 });
 
-// Add a new user
+// Add a new user (with automatic password generation)
 apiRouter.post('/users', async (req, res) => {
     let { email, password, isAdmin } = req.body;
     
@@ -145,7 +103,8 @@ apiRouter.post('/users', async (req, res) => {
     }
 });
 
-// Change own password
+// Change own password (by user) - MOVED UP
+// This specific route must come BEFORE the parameterized route '/users/:originalEmail'
 apiRouter.put('/users/change-password', async (req, res) => {
     const { email, currentPassword, newPassword } = req.body;
 
@@ -169,7 +128,7 @@ apiRouter.put('/users/change-password', async (req, res) => {
     }
 });
 
-// Update a user
+// Update a user (by admin)
 apiRouter.put('/users/:originalEmail', async (req, res) => {
     const { originalEmail } = req.params;
     const { email, password } = req.body;
@@ -188,13 +147,15 @@ apiRouter.put('/users/:originalEmail', async (req, res) => {
 });
 
 
-// Delete a user and their speaker data
+// Delete a user and all their associated speaker data in a transaction
 apiRouter.delete('/users/:email', async (req, res) => {
     const { email } = req.params;
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
+        // Delete speaker data created by the user
         await client.query('DELETE FROM speakers WHERE "createdBy" = $1', [email]);
+        // Delete the user
         await client.query('DELETE FROM users WHERE email = $1', [email]);
         await client.query('COMMIT');
         res.status(204).send();
@@ -206,52 +167,6 @@ apiRouter.delete('/users/:email', async (req, res) => {
         client.release();
     }
 });
-
-// Export interns data
-apiRouter.get('/users/export/interns', async (req, res) => {
-    const client = await pool.connect();
-    try {
-        const query = 'SELECT email, "isAdmin" FROM users WHERE "isAdmin" = false';
-        const cursor = client.query(new Cursor(query));
-        
-        res.setHeader('Content-Type', 'text/csv');
-        res.setHeader('Content-Disposition', 'attachment; filename="interns_export.csv"');
-        
-        const headers = ['email', 'role'];
-        res.write(headers.join(',') + '\n');
-
-        const readNextBatch = () => {
-            cursor.read(100, (err, rows) => {
-                if (err) {
-                    console.error('Error reading from cursor:', err);
-                    if (!res.headersSent) res.status(500).send('Error exporting data');
-                    client.release();
-                    return;
-                }
-
-                if (rows.length === 0) {
-                    res.end();
-                    client.release();
-                    return;
-                }
-
-                const csvRows = rows.map(row => {
-                    return [escapeCsvValue(row.email), 'Intern'].join(',');
-                }).join('\n');
-                
-                res.write(csvRows + '\n', 'utf-8', readNextBatch);
-            });
-        };
-        
-        readNextBatch();
-
-    } catch (err) {
-        console.error('Export interns error:', err);
-        if (!res.headersSent) res.status(500).send('Error starting export');
-        client.release();
-    }
-});
-
 
 // Get all speaker data
 apiRouter.get('/speakers', async (req, res) => {
@@ -331,13 +246,14 @@ apiRouter.get('/speakers/email-check/:email', async (req, res) => {
     }
 });
 
-// Bulk add speakers from JSON body
+// Bulk add speakers - REFACTORED for performance and reliability
 apiRouter.post('/speakers/bulk', async (req, res) => {
     const speakers = req.body;
     if (!speakers || !Array.isArray(speakers) || speakers.length === 0) {
         return res.status(400).json({ message: 'No speaker data provided.' });
     }
 
+    // De-duplicate the incoming array based on businessEmail, keeping the first occurrence.
     const seenEmails = new Set();
     const uniqueSpeakers = speakers.filter(s => {
         if (!s.businessEmail) return false;
@@ -353,10 +269,10 @@ apiRouter.post('/speakers/bulk', async (req, res) => {
     
     const client = await pool.connect();
     try {
-        await client.query('BEGIN');
+        await client.query('BEGIN'); // Start transaction
 
         let totalImportedCount = 0;
-        const batchSize = 200;
+        const batchSize = 200; // Process 200 records at a time to avoid parameter limit
 
         for (let i = 0; i < uniqueSpeakers.length; i += batchSize) {
             const batch = uniqueSpeakers.slice(i, i + batchSize);
@@ -387,229 +303,21 @@ apiRouter.post('/speakers/bulk', async (req, res) => {
             totalImportedCount += result.rowCount;
         }
         
-        await client.query('COMMIT');
+        await client.query('COMMIT'); // Commit the transaction
         
         const skippedCount = speakers.length - totalImportedCount;
 
         res.json({ importedCount: totalImportedCount, skippedCount });
 
     } catch (err) {
-        await client.query('ROLLBACK');
-        console.error('Bulk import transaction failed:', err);
+        await client.query('ROLLBACK'); // Rollback on any error
+        console.error('Bulk import transaction failed:', {
+            message: err.message,
+            code: err.code,
+            detail: err.detail,
+        });
         res.status(500).json({ message: 'An error occurred during the import. The operation was rolled back.' });
     } finally {
-        client.release();
-    }
-});
-
-// Bulk add speakers from CSV upload
-apiRouter.post('/speakers/upload-csv', async (req, res) => {
-    const { csvContent, createdBy } = req.body;
-    if (!csvContent || !createdBy) {
-        return res.status(400).json({ message: 'CSV content and creator email are required.' });
-    }
-
-    try {
-        const parseResult = Papa.parse(csvContent, {
-            header: true,
-            skipEmptyLines: true,
-            transformHeader: (header) => {
-                const cleanedHeader = header.charCodeAt(0) === 0xFEFF ? header.slice(1) : header;
-                return cleanedHeader.trim();
-            },
-        });
-
-        if (parseResult.errors.length > 0) {
-            console.warn('CSV parsing encountered non-fatal errors:', parseResult.errors);
-        }
-
-        const parsedRows = parseResult.data;
-
-        const remappedData = parsedRows.map(originalRow => {
-            const newRow = {};
-            for (const originalHeader in originalRow) {
-                const normalizedHeader = normalizeKey(originalHeader);
-                const finalKey = fieldMap[normalizedHeader];
-                if (finalKey) {
-                    newRow[finalKey] = originalRow[originalHeader];
-                }
-            }
-            return newRow;
-        });
-
-        const dataToImport = [];
-        for (const row of remappedData) {
-            if (row.businessEmail && String(row.businessEmail).trim()) {
-                const getBool = (key) => ['true', '1', 'yes'].includes(String(row[key] ?? '').toLowerCase());
-                dataToImport.push({
-                    createdBy: createdBy,
-                    firstName: row.firstName || '', lastName: row.lastName || '', title: row.title || '', company: row.company || '',
-                    businessEmail: row.businessEmail, country: row.country || '', website: row.website || '',
-                    fullName: row.fullName || `${row.firstName || ''} ${row.lastName || ''}`.trim(), extractedRole: row.extractedRole || '',
-                    industry: row.industry || '', personLinkedinUrl: row.personLinkedinUrl || '', stage: row.stage || '', phoneNumber: row.phoneNumber || '',
-                    employees: row.employees || '', location: row.location || '', city: row.city || '', state: row.state || '',
-                    companyAddress: row.companyAddress || '', companyCity: row.companyCity || '', companyState: row.companyState || '',
-                    companyCountry: row.companyCountry || '', companyPhone: row.companyPhone || '', secondaryEmail: row.secondaryEmail || '',
-                    speakingTopic: row.speakingTopic || '', speakingLink: row.speakingLink || '', isEmailValid: getBool('isEmailValid'),
-                    isLinkedInValid: getBool('isLinkedInValid'), isWebsiteValid: getBool('isWebsiteValid'), isCeo: getBool('isCeo'),
-                    isSpeaker: getBool('isSpeaker'), isAuthor: getBool('isAuthor'),
-                });
-            }
-        }
-
-        if (dataToImport.length === 0) {
-            return res.status(400).json({ message: 'No valid speaker data with business emails found in the CSV.' });
-        }
-        
-        // This logic is duplicated from /speakers/bulk. Could be refactored in a real-world scenario.
-        const seenEmails = new Set();
-        const uniqueSpeakers = dataToImport.filter(s => {
-            const lowerCaseEmail = s.businessEmail.toLowerCase();
-            const duplicate = seenEmails.has(lowerCaseEmail);
-            seenEmails.add(lowerCaseEmail);
-            return !duplicate;
-        });
-
-        if (uniqueSpeakers.length === 0) {
-             return res.json({ importedCount: 0, skippedCount: dataToImport.length });
-        }
-
-        const client = await pool.connect();
-        try {
-            await client.query('BEGIN');
-            let totalImportedCount = 0;
-            const batchSize = 200;
-
-            for (let i = 0; i < uniqueSpeakers.length; i += batchSize) {
-                const batch = uniqueSpeakers.slice(i, i + batchSize);
-                const valuesClause = [];
-                const queryParams = [];
-                let paramIndex = 1;
-                batch.forEach(s => {
-                    const newId = `speaker-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
-                    const rowParams = [newId, s.createdBy, s.firstName, s.lastName, s.title, s.company, s.businessEmail, s.country, s.website, s.fullName, s.isEmailValid, s.isLinkedInValid, s.isWebsiteValid, s.extractedRole, s.isCeo, s.isSpeaker, s.isAuthor, s.industry, s.personLinkedinUrl, s.stage, s.phoneNumber, s.employees, s.location, s.city, s.state, s.companyAddress, s.companyCity, s.companyState, s.companyCountry, s.companyPhone, s.secondaryEmail, s.speakingTopic, s.speakingLink];
-                    const paramPlaceholders = rowParams.map(() => `$${paramIndex++}`);
-                    valuesClause.push(`(${paramPlaceholders.join(', ')})`);
-                    queryParams.push(...rowParams);
-                });
-                const query = `INSERT INTO speakers (id, "createdBy", "firstName", "lastName", title, company, "businessEmail", country, website, "fullName", "isEmailValid", "isLinkedInValid", "isWebsiteValid", "extractedRole", "isCeo", "isSpeaker", "isAuthor", industry, "personLinkedinUrl", stage, "phoneNumber", employees, location, city, state, "companyAddress", "companyCity", "companyState", "companyCountry", "companyPhone", "secondaryEmail", "speakingTopic", "speakingLink") VALUES ${valuesClause.join(', ')} ON CONFLICT ("businessEmail") DO NOTHING RETURNING id;`;
-                const result = await client.query(query, queryParams);
-                totalImportedCount += result.rowCount;
-            }
-            await client.query('COMMIT');
-            const skippedCount = dataToImport.length - totalImportedCount;
-            res.json({ importedCount: totalImportedCount, skippedCount });
-        } catch (err) {
-            await client.query('ROLLBACK');
-            console.error('CSV import transaction failed:', err);
-            res.status(500).json({ message: 'An error occurred during the CSV import. The operation was rolled back.' });
-        } finally {
-            client.release();
-        }
-    } catch (err) {
-        console.error('Error processing CSV upload:', err);
-        res.status(500).json({ message: 'An internal server error occurred while processing the CSV file.' });
-    }
-});
-
-
-// Export all speaker data
-apiRouter.get('/speakers/export', async (req, res) => {
-    const client = await pool.connect();
-    try {
-        const query = 'SELECT * FROM speakers';
-        const cursor = client.query(new Cursor(query));
-
-        res.setHeader('Content-Type', 'text/csv');
-        res.setHeader('Content-Disposition', 'attachment; filename="speaker_data_export.csv"');
-        
-        let isFirstBatch = true;
-
-        const readNextBatch = () => {
-            cursor.read(100, (err, rows) => {
-                if (err) {
-                    console.error('Error reading from cursor:', err);
-                    if (!res.headersSent) res.status(500).send('Error exporting data');
-                    client.release();
-                    return;
-                }
-
-                if (rows.length === 0) {
-                    res.end();
-                    client.release();
-                    return;
-                }
-
-                if (isFirstBatch) {
-                    const headers = Object.keys(rows[0]);
-                    res.write(headers.join(',') + '\n');
-                    isFirstBatch = false;
-                }
-
-                const csvRows = rows.map(row => 
-                    Object.values(row).map(escapeCsvValue).join(',')
-                ).join('\n');
-                
-                res.write(csvRows + '\n', 'utf-8', readNextBatch);
-            });
-        };
-        
-        readNextBatch();
-
-    } catch (err) {
-        console.error('Export speakers error:', err);
-        if (!res.headersSent) res.status(500).send('Error starting export');
-        client.release();
-    }
-});
-
-// Export speaker data for a specific user
-apiRouter.get('/speakers/export/user/:email', async (req, res) => {
-    const { email } = req.params;
-    const client = await pool.connect();
-    try {
-        const query = 'SELECT * FROM speakers WHERE "createdBy" = $1';
-        const cursor = client.query(new Cursor(query, [email]));
-
-        res.setHeader('Content-Type', 'text/csv');
-        res.setHeader('Content-Disposition', `attachment; filename="speaker_data_${email}.csv"`);
-        
-        let isFirstBatch = true;
-
-        const readNextBatch = () => {
-            cursor.read(100, (err, rows) => {
-                if (err) {
-                    console.error('Error reading from cursor:', err);
-                    if (!res.headersSent) res.status(500).send('Error exporting data');
-                    client.release();
-                    return;
-                }
-
-                if (rows.length === 0) {
-                    res.end();
-                    client.release();
-                    return;
-                }
-
-                if (isFirstBatch && rows.length > 0) {
-                    const headers = Object.keys(rows[0]);
-                    res.write(headers.join(',') + '\n');
-                    isFirstBatch = false;
-                }
-
-                const csvRows = rows.map(row => 
-                    Object.values(row).map(escapeCsvValue).join(',')
-                ).join('\n');
-                
-                res.write(csvRows + '\n', 'utf-8', readNextBatch);
-            });
-        };
-        
-        readNextBatch();
-
-    } catch (err) {
-        console.error('Export user speakers error:', err);
-        if (!res.headersSent) res.status(500).send('Error starting export');
         client.release();
     }
 });
