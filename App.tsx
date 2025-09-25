@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import type { User, SpeakerData } from './types';
 import * as api from './mockApi';
@@ -17,6 +16,13 @@ const App: React.FC = () => {
     setIsLoading(false);
   }, []);
   
+  const refetchSpeakerData = async () => {
+    if (currentUser && !currentUser.isAdmin) {
+      const data = await api.getSpeakerDataByUser(currentUser.email);
+      setSpeakerDataList(data);
+    }
+  };
+
   const handleLogin = async (email: string, pass: string) => {
     setLoginError(null);
     setIsLoading(true);
@@ -24,8 +30,7 @@ const App: React.FC = () => {
     if (user) {
       setCurrentUser(user);
       if (!user.isAdmin) {
-        const data = await api.getSpeakerDataByUser(user.email);
-        setSpeakerDataList(data);
+        await refetchSpeakerData();
       }
     } else {
       setLoginError('Invalid email or password.');
@@ -59,17 +64,6 @@ const App: React.FC = () => {
     await api.deleteSpeakerData(speakerId);
     setSpeakerDataList(prev => prev.filter(s => s.id !== speakerId));
   };
-
-  const handleBulkAddSpeakers = async (newSpeakers: Omit<SpeakerData, 'id'>[]): Promise<{ importedCount: number; skippedCount: number; }> => {
-    if (currentUser) {
-      const result = await api.bulkAddSpeakerData(newSpeakers);
-      // Refresh user's data after import
-      const refreshedData = await api.getSpeakerDataByUser(currentUser.email);
-      setSpeakerDataList(refreshedData);
-      return result;
-    }
-    return { importedCount: 0, skippedCount: newSpeakers.length };
-  };
   
   const renderContent = () => {
     if (isLoading && !currentUser) {
@@ -96,8 +90,8 @@ const App: React.FC = () => {
               onAddSpeaker={handleAddSpeaker}
               onUpdateSpeaker={handleUpdateSpeaker}
               onDeleteSpeaker={handleDeleteSpeaker}
-              onBulkAddSpeakers={handleBulkAddSpeakers}
               currentUserEmail={currentUser.email}
+              onDataImported={refetchSpeakerData}
             />
           )}
         </main>
