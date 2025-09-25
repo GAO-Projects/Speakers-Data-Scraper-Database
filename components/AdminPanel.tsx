@@ -622,15 +622,15 @@ const AdminPanel: React.FC<{ currentUser: User }> = ({ currentUser }) => {
         <Modal isOpen={isDeleteUserModalOpen} onClose={() => setIsDeleteUserModalOpen(false)} title="Confirm Deletion">
           <div className="text-slate-300 space-y-3">
             <p>Are you sure you want to delete the user: <strong className="text-white">{userToDelete.email}</strong>?</p>
-            <div className="bg-red-900/50 border border-red-700/50 p-3 rounded-md text-sm">
-                This will also permanently delete all <strong className="text-white">{speakerCountsByUser.get(userToDelete.email) || 0} speaker entries</strong> created by this user.
+            <div className="bg-amber-900/50 border border-amber-700/50 p-3 rounded-md text-sm">
+                This action will only delete the user account.
                 <br />
-                This action cannot be undone.
+                All speaker entries created by this user will <strong className="text-white">remain in the database</strong>. This action cannot be undone.
             </div>
           </div>
           <div className="pt-4 flex justify-end space-x-3">
             <button type="button" onClick={() => setIsDeleteUserModalOpen(false)} className="px-4 py-2 bg-slate-600 text-white font-semibold rounded-lg shadow-md hover:bg-slate-700">Cancel</button>
-            <button type="button" onClick={handleDeleteUser} className="px-4 py-2 bg-red-600 text-white font-semibold rounded-lg shadow-md hover:bg-red-700">Delete User & Data</button>
+            <button type="button" onClick={handleDeleteUser} className="px-4 py-2 bg-red-600 text-white font-semibold rounded-lg shadow-md hover:bg-red-700">Delete User</button>
           </div>
         </Modal>
       )}
