@@ -229,7 +229,7 @@ const UserPanel: React.FC<UserPanelProps> = ({ data, onAddSpeaker, onUpdateSpeak
     }
   };
   
-   const handleImportClick = () => {
+  const handleImportClick = () => {
     importFileRef.current?.click();
   };
   
@@ -237,102 +237,78 @@ const UserPanel: React.FC<UserPanelProps> = ({ data, onAddSpeaker, onUpdateSpeak
     const file = event.target.files?.[0];
     if (!file) return;
 
-    Papa.parse(file, {
-        header: true,
-        skipEmptyLines: true,
-        complete: async (results: { data: { [key: string]: any }[] }) => {
-            if (!results.data || results.data.length === 0) {
-                setToast({ message: 'Import failed. The CSV file appears to be empty or has no data.', type: 'error' });
-                if (event.target) event.target.value = '';
-                return;
-            }
+    setToast({ message: 'Parsing CSV file in the background...', type: 'success' });
+    
+    workerRef.current = new Worker(new URL('../workers/csv.worker.ts', import.meta.url), { type: 'module' });
+    
+    const allData: any[] = [];
 
-            // Remap the data from the CSV to our SpeakerData format using the robust fieldMap
-            const remappedData = results.data.map(originalRow => {
+    workerRef.current.onmessage = async (e) => {
+        const { type, data, count, error } = e.data;
+
+        if (type === 'chunk') {
+            allData.push(...data);
+        } else if (type === 'complete') {
+            setToast({ message: `Parsing complete. Found ${count} records. Now preparing for import...`, type: 'success' });
+            
+            const remappedData = allData.map(originalRow => {
                 const newRow: { [key: string]: any } = {};
                 for (const originalHeader in originalRow) {
                     const normalizedHeader = normalizeKey(originalHeader);
-                    const finalKey = fieldMap[normalizedHeader]; // Look up the correct camelCase key
+                    const finalKey = fieldMap[normalizedHeader];
                     if (finalKey) {
                         newRow[finalKey] = originalRow[originalHeader];
                     }
                 }
                 return newRow as Partial<SpeakerData>;
             });
-
+            
             const dataToImport: Omit<SpeakerData, 'id'>[] = [];
             
             for (const row of remappedData) {
-                const businessEmail = row.businessEmail;
-                
-                if (businessEmail && String(businessEmail).trim()) {
-                    const getBool = (key: keyof SpeakerData) => {
-                        const val = String(row[key] ?? '').toLowerCase();
-                        return ['true', '1', 'yes'].includes(val);
-                    };
-
+                if (row.businessEmail && String(row.businessEmail).trim()) {
+                    const getBool = (key: keyof SpeakerData) => ['true', '1', 'yes'].includes(String(row[key] ?? '').toLowerCase());
                     dataToImport.push({
-                      createdBy: (row.createdBy || currentUser.email) as string,
-                      firstName: row.firstName || '',
-                      lastName: row.lastName || '',
-                      title: row.title || '',
-                      company: row.company || '',
-                      businessEmail: businessEmail,
-                      country: row.country || '',
-                      website: row.website || '',
-                      fullName: row.fullName || `${row.firstName || ''} ${row.lastName || ''}`.trim(),
-                      extractedRole: row.extractedRole || '',
-                      industry: row.industry || '',
-                      personLinkedinUrl: row.personLinkedinUrl || '',
-                      stage: row.stage || '',
-                      phoneNumber: row.phoneNumber || '',
-                      employees: row.employees || '',
-                      location: row.location || '',
-                      city: row.city || '',
-                      state: row.state || '',
-                      companyAddress: row.companyAddress || '',
-                      companyCity: row.companyCity || '',
-                      companyState: row.companyState || '',
-                      companyCountry: row.companyCountry || '',
-                      companyPhone: row.companyPhone || '',
-                      secondaryEmail: row.secondaryEmail || '',
-                      speakingTopic: row.speakingTopic || '',
-                      speakingLink: row.speakingLink || '',
-                      isEmailValid: getBool('isEmailValid'),
-                      isLinkedInValid: getBool('isLinkedInValid'),
-                      isWebsiteValid: getBool('isWebsiteValid'),
-                      isCeo: getBool('isCeo'),
-                      isSpeaker: getBool('isSpeaker'),
-                      isAuthor: getBool('isAuthor'),
+                      createdBy: currentUserEmail,
+                      firstName: row.firstName || '', lastName: row.lastName || '', title: row.title || '', company: row.company || '',
+                      businessEmail: row.businessEmail, country: row.country || '', website: row.website || '',
+                      fullName: row.fullName || `${row.firstName || ''} ${row.lastName || ''}`.trim(), extractedRole: row.extractedRole || '',
+                      industry: row.industry || '', personLinkedinUrl: row.personLinkedinUrl || '', stage: row.stage || '', phoneNumber: row.phoneNumber || '',
+                      employees: row.employees || '', location: row.location || '', city: row.city || '', state: row.state || '',
+                      companyAddress: row.companyAddress || '', companyCity: row.companyCity || '', companyState: row.companyState || '',
+                      companyCountry: row.companyCountry || '', companyPhone: row.companyPhone || '', secondaryEmail: row.secondaryEmail || '',
+                      speakingTopic: row.speakingTopic || '', speakingLink: row.speakingLink || '', isEmailValid: getBool('isEmailValid'),
+                      isLinkedInValid: getBool('isLinkedInValid'), isWebsiteValid: getBool('isWebsiteValid'), isCeo: getBool('isCeo'),
+                      isSpeaker: getBool('isSpeaker'), isAuthor: getBool('isAuthor'),
                     });
                 }
             }
             
             if (dataToImport.length > 0) {
-                setToast({ message: `Importing ${dataToImport.length} valid records...`, type: 'success' });
+                setToast({ message: `Importing ${dataToImport.length} valid records... This may take a moment.`, type: 'success' });
                 try {
                     const result = await api.bulkAddSpeakerData(dataToImport);
-                    setToast({ message: `Import complete. Added ${result.importedCount} new speakers, skipped ${result.skippedCount} duplicates.`, type: 'success' });
-                    fetchSpeakers();
-                } catch (error) {
-                    const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred during import.';
+                    setToast({ message: `Import complete. Added ${result.importedCount}, skipped ${result.skippedCount} duplicates.`, type: 'success' });
+                    onDataImported();
+                } catch (err) {
+                    const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred during import.';
                     setToast({ message: `Import failed: ${errorMessage}`, type: 'error' });
                 }
             } else {
-                const foundHeaders = results.data.length > 0 ? Object.keys(results.data[0]) : [];
-                setToast({ 
-                    message: `Import failed. No rows with a valid "Business Email" could be found. Please check your CSV file to ensure the email column is present, correctly named (e.g., "Business Email", "Email"), and contains data. Headers found: ${foundHeaders.slice(0, 5).join(', ')}`,
-                    type: 'error' 
-                });
+                setToast({ message: 'Import failed. No rows with a valid "Business Email" found.', type: 'error' });
             }
 
+            workerRef.current?.terminate();
             if (event.target) event.target.value = '';
-        },
-        error: (error: Error) => {
-            setToast({ message: `Error parsing CSV: ${error.message}`, type: 'error' });
+
+        } else if (type === 'error') {
+            setToast({ message: `Error parsing CSV: ${error}`, type: 'error' });
+            workerRef.current?.terminate();
             if (event.target) event.target.value = '';
-        },
-    });
+        }
+    };
+
+    workerRef.current.postMessage(file);
   };
 
   const filteredData = useMemo(() => {
