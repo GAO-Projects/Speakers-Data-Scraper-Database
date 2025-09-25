@@ -147,16 +147,29 @@ apiRouter.put('/users/:originalEmail', async (req, res) => {
 });
 
 
-// Delete a user
+// Delete a user, ensuring their speaker data is preserved
 apiRouter.delete('/users/:email', async (req, res) => {
     const { email } = req.params;
+    const client = await pool.connect(); // Use a client for transaction
     try {
-        // Only delete the user. Speaker entries created by them will remain.
-        await pool.query('DELETE FROM users WHERE email = $1', [email]);
+        await client.query('BEGIN');
+        
+        // Step 1: Disassociate speaker entries from the user to prevent cascade deletion.
+        // This sets createdBy to NULL, assuming the column is nullable.
+        // This is the key step to preserving the data.
+        await client.query('UPDATE speakers SET "createdBy" = NULL WHERE "createdBy" = $1', [email]);
+
+        // Step 2: Now that speaker data is safe, delete the user.
+        await client.query('DELETE FROM users WHERE email = $1', [email]);
+        
+        await client.query('COMMIT'); // Finalize the transaction
         res.status(204).send();
     } catch (err) {
-        console.error('Error deleting user:', err);
-        res.status(500).json({ message: 'Failed to delete user.' });
+        await client.query('ROLLBACK'); // Undo changes if anything went wrong
+        console.error('Error in transaction for deleting user:', err);
+        res.status(500).json({ message: 'Failed to delete user. Operation was rolled back.' });
+    } finally {
+        client.release(); // Release the client back to the pool
     }
 });
 
