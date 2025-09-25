@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import type { SpeakerData } from '../types';
 import * as api from '../mockApi';
 import Modal from './Modal';
@@ -24,43 +24,6 @@ const getInitialFormData = (): Omit<SpeakerData, 'id' | 'createdBy'> => ({
   speakingTopic: '', speakingLink: ''
 });
 
-// A simple, predictable normalizer: lowercase and remove all whitespace.
-const normalizeKey = (key: string): string => {
-    if (!key) return '';
-    return key.toLowerCase().replace(/\s+/g, '');
-};
-
-// Creates an exhaustive mapping from various normalized header names to the correct SpeakerData keys.
-const getFieldMap = (): { [key: string]: keyof SpeakerData } => {
-    const map: { [key: string]: keyof SpeakerData } = {};
-
-    const aliases: { [alias: string]: keyof SpeakerData } = {
-        // Main Aliases
-        'firstname': 'firstName', 'lastname': 'lastName', 'title': 'title', 'company': 'company',
-        'businessemail': 'businessEmail', 'email': 'businessEmail', 'emailaddress': 'businessEmail',
-        'workemail': 'businessEmail', 'country': 'country', 'website': 'website', 'fullname': 'fullName',
-        'emailvalid': 'isEmailValid', 'isemailvalid': 'isEmailValid', 'linkedvalid': 'isLinkedInValid',
-        'islinkedinvalid': 'isLinkedInValid', 'websitevalid': 'isWebsiteValid', 'iswebsitevalid': 'isWebsiteValid',
-        'extractedrole': 'extractedRole', 'isceo': 'isCeo', 'isspeaker': 'isSpeaker', 'isauthor': 'isAuthor',
-        'industry': 'industry', 'personlinkedinurl': 'personLinkedinUrl', 'linkedin': 'personLinkedinUrl',
-        'linkedinurl': 'personLinkedinUrl', 'stage': 'stage', 'phonenumber': 'phoneNumber', 'phone': 'phoneNumber',
-        'employees': 'employees', 'location': 'location', 'city': 'city', 'state': 'state',
-        'companyaddress': 'companyAddress', 'companycity': 'companyCity', 'companystate': 'companyState',
-        'companycountry': 'companyCountry', 'companyphone': 'companyPhone', 'secondaryemail': 'secondaryEmail',
-        'speakingtopic': 'speakingTopic', 'speakinginfotopic': 'speakingTopic', 'speakinglink': 'speakingLink',
-        'speakinginfolink': 'speakingLink', 'createdby': 'createdBy', 'id': 'id'
-    };
-    
-    for (const alias in aliases) {
-        map[normalizeKey(alias)] = aliases[alias];
-    }
-    
-    return map;
-};
-
-// Generate the map once for efficiency
-const fieldMap = getFieldMap();
-
 const UserPanel: React.FC<UserPanelProps> = ({ data, onAddSpeaker, onUpdateSpeaker, onDeleteSpeaker, currentUserEmail, onDataImported }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingSpeaker, setEditingSpeaker] = useState<SpeakerData | null>(null);
@@ -78,19 +41,11 @@ const UserPanel: React.FC<UserPanelProps> = ({ data, onAddSpeaker, onUpdateSpeak
   const [isExporting, setIsExporting] = useState(false);
   
   const importFileRef = useRef<HTMLInputElement>(null);
-  const workerRef = useRef<Worker | null>(null);
 
   const mandatoryFields: (keyof SpeakerData)[] = [
     'firstName', 'lastName', 'title', 'company', 'businessEmail',
     'country', 'website', 'speakingTopic', 'speakingLink'
   ];
-  
-  useEffect(() => {
-    // Cleanup worker on component unmount
-    return () => {
-        workerRef.current?.terminate();
-    }
-  }, []);
 
   const openAddModal = () => {
     setEditingSpeaker(null);
@@ -237,79 +192,35 @@ const UserPanel: React.FC<UserPanelProps> = ({ data, onAddSpeaker, onUpdateSpeak
     const file = event.target.files?.[0];
     if (!file) return;
 
-    setToast({ message: 'Parsing CSV file in the background...', type: 'success' });
-    
-    workerRef.current = new Worker(new URL('../workers/csv.worker.ts', import.meta.url), { type: 'module' });
-    
-    const allData: any[] = [];
+    setToast({ message: 'Importing your data... This may take a moment.', type: 'success' });
 
-    workerRef.current.onmessage = async (e) => {
-        const { type, data, count, error } = e.data;
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      const csvContent = e.target?.result as string;
+      if (!csvContent) {
+        setToast({ message: 'Could not read the file.', type: 'error' });
+        return;
+      }
 
-        if (type === 'chunk') {
-            allData.push(...data);
-        } else if (type === 'complete') {
-            setToast({ message: `Parsing complete. Found ${count} records. Now preparing for import...`, type: 'success' });
-            
-            const remappedData = allData.map(originalRow => {
-                const newRow: { [key: string]: any } = {};
-                for (const originalHeader in originalRow) {
-                    const normalizedHeader = normalizeKey(originalHeader);
-                    const finalKey = fieldMap[normalizedHeader];
-                    if (finalKey) {
-                        newRow[finalKey] = originalRow[originalHeader];
-                    }
-                }
-                return newRow as Partial<SpeakerData>;
-            });
-            
-            const dataToImport: Omit<SpeakerData, 'id'>[] = [];
-            
-            for (const row of remappedData) {
-                if (row.businessEmail && String(row.businessEmail).trim()) {
-                    const getBool = (key: keyof SpeakerData) => ['true', '1', 'yes'].includes(String(row[key] ?? '').toLowerCase());
-                    dataToImport.push({
-                      createdBy: currentUserEmail,
-                      firstName: row.firstName || '', lastName: row.lastName || '', title: row.title || '', company: row.company || '',
-                      businessEmail: row.businessEmail, country: row.country || '', website: row.website || '',
-                      fullName: row.fullName || `${row.firstName || ''} ${row.lastName || ''}`.trim(), extractedRole: row.extractedRole || '',
-                      industry: row.industry || '', personLinkedinUrl: row.personLinkedinUrl || '', stage: row.stage || '', phoneNumber: row.phoneNumber || '',
-                      employees: row.employees || '', location: row.location || '', city: row.city || '', state: row.state || '',
-                      companyAddress: row.companyAddress || '', companyCity: row.companyCity || '', companyState: row.companyState || '',
-                      companyCountry: row.companyCountry || '', companyPhone: row.companyPhone || '', secondaryEmail: row.secondaryEmail || '',
-                      speakingTopic: row.speakingTopic || '', speakingLink: row.speakingLink || '', isEmailValid: getBool('isEmailValid'),
-                      isLinkedInValid: getBool('isLinkedInValid'), isWebsiteValid: getBool('isWebsiteValid'), isCeo: getBool('isCeo'),
-                      isSpeaker: getBool('isSpeaker'), isAuthor: getBool('isAuthor'),
-                    });
-                }
-            }
-            
-            if (dataToImport.length > 0) {
-                setToast({ message: `Importing ${dataToImport.length} valid records... This may take a moment.`, type: 'success' });
-                try {
-                    const result = await api.bulkAddSpeakerData(dataToImport);
-                    setToast({ message: `Import complete. Added ${result.importedCount}, skipped ${result.skippedCount} duplicates.`, type: 'success' });
-                    onDataImported();
-                } catch (err) {
-                    const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred during import.';
-                    setToast({ message: `Import failed: ${errorMessage}`, type: 'error' });
-                }
-            } else {
-                setToast({ message: 'Import failed. No rows with a valid "Business Email" found.', type: 'error' });
-            }
-
-            workerRef.current?.terminate();
-            if (event.target) event.target.value = '';
-
-        } else if (type === 'error') {
-            setToast({ message: `Error parsing CSV: ${error}`, type: 'error' });
-            workerRef.current?.terminate();
-            if (event.target) event.target.value = '';
-        }
+      try {
+        const result = await api.uploadCsvData(csvContent, currentUserEmail);
+        setToast({ message: `Import complete. Added ${result.importedCount}, skipped ${result.skippedCount} duplicates.`, type: 'success' });
+        onDataImported();
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred during import.';
+        setToast({ message: `Import failed: ${errorMessage}`, type: 'error' });
+      } finally {
+        if (event.target) event.target.value = '';
+      }
+    };
+    reader.onerror = () => {
+      setToast({ message: 'Error reading file.', type: 'error' });
+      if (event.target) event.target.value = '';
     };
 
-    workerRef.current.postMessage(file);
+    reader.readAsText(file);
   };
+
 
   const filteredData = useMemo(() => {
      return data.filter(s => {
