@@ -55,9 +55,10 @@ const App: React.FC = () => {
     return null;
   };
 
-  const handleUpdateSpeaker = async (updatedSpeaker: SpeakerData) => {
-    await api.updateSpeakerData(updatedSpeaker);
-    setSpeakerDataList(prev => prev.map(s => s.id === updatedSpeaker.id ? updatedSpeaker : s));
+  const handleUpdateSpeaker = async (updatedSpeaker: SpeakerData): Promise<SpeakerData> => {
+    const savedSpeaker = await api.updateSpeakerData(updatedSpeaker);
+    setSpeakerDataList(prev => prev.map(s => s.id === savedSpeaker.id ? savedSpeaker : s));
+    return savedSpeaker;
   };
 
   const handleDeleteSpeaker = async (speakerId: string) => {
