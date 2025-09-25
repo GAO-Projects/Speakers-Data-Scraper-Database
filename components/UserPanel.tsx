@@ -1,8 +1,9 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import type { SpeakerData } from '../types';
 import * as api from '../mockApi';
 import Modal from './Modal';
 import Toast from './Toast';
+import Papa from 'papaparse';
 
 interface UserPanelProps {
   data: SpeakerData[];
@@ -77,14 +78,6 @@ const UserPanel: React.FC<UserPanelProps> = ({ data, onAddSpeaker, onUpdateSpeak
   const [passwordErrors, setPasswordErrors] = useState<Partial<Record<keyof typeof passwordFormData, string>>>({});
 
   const importFileRef = useRef<HTMLInputElement>(null);
-  const workerRef = useRef<Worker | null>(null);
-
-  useEffect(() => {
-    // Cleanup worker on component unmount
-    return () => {
-        workerRef.current?.terminate();
-    }
-  }, []);
 
   const mandatoryFields: (keyof SpeakerData)[] = [
     'firstName', 'lastName', 'title', 'company', 'businessEmail',
@@ -215,21 +208,19 @@ const UserPanel: React.FC<UserPanelProps> = ({ data, onAddSpeaker, onUpdateSpeak
     const file = event.target.files?.[0];
     if (!file) return;
 
-    setToast({ message: 'Parsing CSV file in the background...', type: 'success' });
+    setToast({ message: 'Parsing CSV file...', type: 'success' });
     
-    workerRef.current = new Worker(new URL('../workers/csv.worker.ts', import.meta.url), { type: 'module' });
-    
-    const allData: any[] = [];
+    Papa.parse(file, {
+        header: true,
+        skipEmptyLines: true,
+        complete: async (results: { data: { [key: string]: any }[] }) => {
+            if (!results.data || results.data.length === 0) {
+                setToast({ message: 'Import failed. The CSV file is empty.', type: 'error' });
+                if (event.target) event.target.value = '';
+                return;
+            }
 
-    workerRef.current.onmessage = async (e) => {
-        const { type, data, count, error } = e.data;
-
-        if (type === 'chunk') {
-            allData.push(...data);
-        } else if (type === 'complete') {
-            setToast({ message: `Parsing complete. Found ${count} records. Now preparing for import...`, type: 'success' });
-            
-            const remappedData = allData.map(originalRow => {
+            const remappedData = results.data.map(originalRow => {
                 const newRow: { [key: string]: any } = {};
                 for (const originalHeader in originalRow) {
                     const normalizedHeader = normalizeKey(originalHeader);
@@ -263,7 +254,7 @@ const UserPanel: React.FC<UserPanelProps> = ({ data, onAddSpeaker, onUpdateSpeak
             }
             
             if (dataToImport.length > 0) {
-                setToast({ message: `Importing ${dataToImport.length} valid records... This may take a moment.`, type: 'success' });
+                setToast({ message: `Importing ${dataToImport.length} valid records...`, type: 'success' });
                 try {
                     const result = await api.bulkAddSpeakerData(dataToImport);
                     setToast({ message: `Import complete. Added ${result.importedCount}, skipped ${result.skippedCount} duplicates.`, type: 'success' });
@@ -276,17 +267,59 @@ const UserPanel: React.FC<UserPanelProps> = ({ data, onAddSpeaker, onUpdateSpeak
                 setToast({ message: 'Import failed. No rows with a valid "Business Email" found.', type: 'error' });
             }
 
-            workerRef.current?.terminate();
             if (event.target) event.target.value = '';
-
-        } else if (type === 'error') {
-            setToast({ message: `Error parsing CSV: ${error}`, type: 'error' });
-            workerRef.current?.terminate();
+        },
+        error: (error: Error) => {
+            setToast({ message: `Error parsing CSV: ${error.message}`, type: 'error' });
             if (event.target) event.target.value = '';
-        }
-    };
+        },
+    });
+  };
 
-    workerRef.current.postMessage(file);
+  const handleDownloadTemplate = () => {
+    const headers = [
+      'First Name', 'Last Name', 'Title', 'Company', 'Business Email', 'Country', 'Website', 
+      'Full Name', 'Is Email Valid', 'Is LinkedIn Valid', 'Is Website Valid', 
+      'Extracted Role', 'Is CEO', 'Is Speaker', 'Is Author', 'Industry', 
+      'Person Linkedin Url', 'Stage', 'Phone Number', 'Employees', 'Location', 
+      'City', 'State', 'Company Address', 'Company City', 'Company State', 
+      'Company Country', 'Company Phone', 'Secondary Email', 'Speaking Topic', 'Speaking Link'
+    ];
+    
+    const csvString = headers.join(',');
+    const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', 'speaker_template.csv');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+  
+  const handleExportMyData = () => {
+    if (data.length === 0) {
+        setToast({ message: 'You have no data to export.', type: 'error' });
+        return;
+    }
+
+    const exportableData = data.map(d => {
+        const { id, createdBy, ...rest } = d;
+        return rest;
+    });
+
+    const csv = Papa.unparse(exportableData);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `my_speaker_data.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    setToast({ message: `Exported ${data.length} records.`, type: 'success' });
   };
 
   const filteredData = useMemo(() => {
@@ -368,8 +401,14 @@ const UserPanel: React.FC<UserPanelProps> = ({ data, onAddSpeaker, onUpdateSpeak
            <button onClick={() => setIsProfileModalOpen(true)} type="button" className="inline-flex items-center justify-center rounded-md border border-slate-500 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2 focus:ring-offset-slate-900 sm:w-auto">
                 Profile
             </button>
+            <button onClick={handleDownloadTemplate} type="button" className="inline-flex items-center justify-center rounded-md border border-transparent bg-slate-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2 focus:ring-offset-slate-900 sm:w-auto">
+                Download Template
+            </button>
             <button onClick={handleImportClick} type="button" className="inline-flex items-center justify-center rounded-md border border-transparent bg-slate-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2 focus:ring-offset-slate-900 sm:w-auto">
                 Import Data
+            </button>
+            <button onClick={handleExportMyData} type="button" className="inline-flex items-center justify-center rounded-md border border-transparent bg-slate-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2 focus:ring-offset-slate-900 sm:w-auto">
+                Export My Data
             </button>
           <button
             onClick={openAddModal}
