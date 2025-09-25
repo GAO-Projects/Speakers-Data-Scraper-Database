@@ -8,7 +8,7 @@ import Papa from 'papaparse';
 interface UserPanelProps {
   data: SpeakerData[];
   onAddSpeaker: (speakerData: Omit<SpeakerData, 'id' | 'createdBy'>) => Promise<SpeakerData | null>;
-  onUpdateSpeaker: (speakerData: SpeakerData) => Promise<void>;
+  onUpdateSpeaker: (speakerData: SpeakerData) => Promise<SpeakerData>;
   onDeleteSpeaker: (speakerId: string) => Promise<void>;
   currentUserEmail: string;
   onDataImported: () => void;
