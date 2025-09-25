@@ -317,6 +317,28 @@ const UserPanel: React.FC<UserPanelProps> = ({ data, onAddSpeaker, onUpdateSpeak
     workerRef.current.postMessage(file);
   };
 
+  const handleDownloadTemplate = () => {
+    const headers = [
+      'First Name', 'Last Name', 'Title', 'Company', 'Business Email', 'Country', 'Website', 
+      'Full Name', 'Is Email Valid', 'Is LinkedIn Valid', 'Is Website Valid', 
+      'Extracted Role', 'Is CEO', 'Is Speaker', 'Is Author', 'Industry', 
+      'Person Linkedin Url', 'Stage', 'Phone Number', 'Employees', 'Location', 
+      'City', 'State', 'Company Address', 'Company City', 'Company State', 
+      'Company Country', 'Company Phone', 'Secondary Email', 'Speaking Topic', 'Speaking Link'
+    ];
+    
+    const csvString = headers.join(',');
+    const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', 'speaker_template.csv');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   const openPasteModal = () => {
     setPastedSpeakers([]);
     setPastedHeaders([]);
@@ -487,6 +509,12 @@ const UserPanel: React.FC<UserPanelProps> = ({ data, onAddSpeaker, onUpdateSpeak
             </button>
             <button onClick={openPasteModal} type="button" className="inline-flex items-center justify-center rounded-md border border-transparent bg-slate-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2 focus:ring-offset-slate-900 sm:w-auto">
                 Paste from Sheet
+            </button>
+            <button onClick={handleDownloadTemplate} type="button" className="inline-flex items-center justify-center rounded-md border border-transparent bg-slate-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2 focus:ring-offset-slate-900 sm:w-auto">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+              CSV Template
             </button>
             <button onClick={handleImportClick} type="button" className="inline-flex items-center justify-center rounded-md border border-transparent bg-slate-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2 focus:ring-offset-slate-900 sm:w-auto">
                 Import Data
