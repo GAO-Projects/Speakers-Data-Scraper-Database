@@ -198,7 +198,7 @@ apiRouter.post('/speakers', async (req, res) => {
     const s = req.body;
     const newId = `speaker-${Date.now()}-${Math.random()}`;
     const query = `
-        INSERT INTO speakers (id, "createdBy", "firstName", "lastName", title, company, "businessEmail", country, website, "fullName", "isEmailValid", "isLinkedInValid", "isWebsiteValid", "extractedRole", "isCeo", "isSpeaker", "isAuthor", industry, "personLinkedinUrl", stage, "phoneNumber", employees, location, city, state, "companyAddress", "companyCity", "companyState", "companyCountry", "companyPhone", "secondaryEmail", "speakingTopic", "speakingLink")
+        INSERT INTO speakers (id, "createdBy", "firstName", "lastName", "title", "company", "businessEmail", "country", "website", "fullName", "isEmailValid", "isLinkedInValid", "isWebsiteValid", "extractedRole", "isCeo", "isSpeaker", "isAuthor", "industry", "personLinkedinUrl", "stage", "phoneNumber", "employees", "location", "city", "state", "companyAddress", "companyCity", "companyState", "companyCountry", "companyPhone", "secondaryEmail", "speakingTopic", "speakingLink")
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33)
         RETURNING *;
     `;
@@ -215,7 +215,7 @@ apiRouter.post('/speakers', async (req, res) => {
 apiRouter.put('/speakers/:id', async (req, res) => {
     const { id } = req.params;
     const s = req.body;
-    const query = 'UPDATE speakers SET "firstName"=$1, "lastName"=$2, title=$3, company=$4, "businessEmail"=$5, country=$6, website=$7, "fullName"=$8, "isEmailValid"=$9, "isLinkedInValid"=$10, "isWebsiteValid"=$11, "extractedRole"=$12, "isCeo"=$13, "isSpeaker"=$14, "isAuthor"=$15, industry=$16, "personLinkedinUrl"=$17, stage=$18, "phoneNumber"=$19, employees=$20, location=$21, city=$22, state=$23, "companyAddress"=$24, "companyCity"=$25, "companyState"=$26, "companyCountry"=$27, "companyPhone"=$28, "secondaryEmail"=$29, "speakingTopic"=$30, "speakingLink"=$31 WHERE id=$32 RETURNING *';
+    const query = 'UPDATE speakers SET "firstName"=$1, "lastName"=$2, "title"=$3, "company"=$4, "businessEmail"=$5, "country"=$6, "website"=$7, "fullName"=$8, "isEmailValid"=$9, "isLinkedInValid"=$10, "isWebsiteValid"=$11, "extractedRole"=$12, "isCeo"=$13, "isSpeaker"=$14, "isAuthor"=$15, "industry"=$16, "personLinkedinUrl"=$17, "stage"=$18, "phoneNumber"=$19, "employees"=$20, "location"=$21, "city"=$22, "state"=$23, "companyAddress"=$24, "companyCity"=$25, "companyState"=$26, "companyCountry"=$27, "companyPhone"=$28, "secondaryEmail"=$29, "speakingTopic"=$30, "speakingLink"=$31 WHERE id=$32 RETURNING *';
     const values = [s.firstName, s.lastName, s.title, s.company, s.businessEmail, s.country, s.website, s.fullName, s.isEmailValid, s.isLinkedInValid, s.isWebsiteValid, s.extractedRole, s.isCeo, s.isSpeaker, s.isAuthor, s.industry, s.personLinkedinUrl, s.stage, s.phoneNumber, s.employees, s.location, s.city, s.state, s.companyAddress, s.companyCity, s.companyState, s.companyCountry, s.companyPhone, s.secondaryEmail, s.speakingTopic, s.speakingLink, id];
     try {
         const result = await pool.query(query, values);
@@ -298,7 +298,7 @@ apiRouter.post('/speakers/bulk', async (req, res) => {
             });
 
             const query = `
-                INSERT INTO speakers (id, "createdBy", "firstName", "lastName", title, company, "businessEmail", country, website, "fullName", "isEmailValid", "isLinkedInValid", "isWebsiteValid", "extractedRole", "isCeo", "isSpeaker", "isAuthor", industry, "personLinkedinUrl", stage, "phoneNumber", employees, location, city, state, "companyAddress", "companyCity", "companyState", "companyCountry", "companyPhone", "secondaryEmail", "speakingTopic", "speakingLink")
+                INSERT INTO speakers (id, "createdBy", "firstName", "lastName", "title", "company", "businessEmail", "country", "website", "fullName", "isEmailValid", "isLinkedInValid", "isWebsiteValid", "extractedRole", "isCeo", "isSpeaker", "isAuthor", "industry", "personLinkedinUrl", "stage", "phoneNumber", "employees", "location", "city", "state", "companyAddress", "companyCity", "companyState", "companyCountry", "companyPhone", "secondaryEmail", "speakingTopic", "speakingLink")
                 VALUES ${valuesClause.join(', ')}
                 ON CONFLICT ("businessEmail") DO NOTHING
                 RETURNING id;
