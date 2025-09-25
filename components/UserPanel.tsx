@@ -715,46 +715,45 @@ const UserPanel: React.FC<UserPanelProps> = ({ data, onAddSpeaker, onUpdateSpeak
         ) : (
           <div>
             <p className="text-slate-300 mb-4">Found <span className="font-bold text-white">{pastedSpeakers.length}</span> records. Please review the data below before saving. Unrecognized columns will be ignored.</p>
-            <div className="max-h-[60vh] overflow-auto ring-1 ring-slate-700 rounded-lg">
-              <table className="min-w-full divide-y divide-slate-700 text-sm">
-                <thead className="bg-slate-800 sticky top-0">
+            <div className="max-h-[60vh] overflow-auto border border-slate-700 rounded-lg">
+              <table className="min-w-full text-sm border-collapse">
+                <thead className="bg-slate-800 sticky top-0 z-10">
                   <tr>
                     {pastedHeaders.map((header) => (
-                      <th key={header} scope="col" className="py-2 px-3 text-left font-semibold text-white whitespace-nowrap">{header}</th>
+                      <th key={header} scope="col" className="border border-slate-600 py-2 px-3 text-left font-semibold text-white whitespace-nowrap">{header}</th>
                     ))}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800 bg-slate-900">
+                <tbody className="bg-slate-900">
                   {pastedSpeakers.map((speaker, rowIndex) => (
                     <tr key={rowIndex}>
                       {pastedHeaders.map(header => {
                         const mappedKey = fieldMap[normalizeKey(header)];
                         const value = mappedKey ? speaker[mappedKey] : undefined;
                         
-                        // Render a checkbox for boolean fields
                         const isBooleanField = mappedKey && (mappedKey.startsWith('is'));
                         if (isBooleanField) {
                             return (
-                                <td key={header} className="px-3 py-1 whitespace-nowrap">
-                                    <div className="flex justify-center">
-                                    <input type="checkbox"
-                                        checked={value === 'true' || value === true}
-                                        onChange={e => handlePastedDataChange(rowIndex, mappedKey, e.target.checked)}
-                                        className="w-4 h-4 text-indigo-600 bg-gray-700 border-gray-600 rounded focus:ring-indigo-600"
-                                    />
+                                <td key={header} className="border border-slate-700 whitespace-nowrap">
+                                    <div className="flex justify-center items-center h-full p-1.5">
+                                      <input type="checkbox"
+                                          checked={value === 'true' || value === true}
+                                          onChange={e => handlePastedDataChange(rowIndex, mappedKey, e.target.checked)}
+                                          className="w-4 h-4 text-indigo-600 bg-slate-700 border-slate-600 rounded focus:ring-indigo-600 ring-offset-slate-900"
+                                      />
                                     </div>
                                 </td>
                             );
                         }
 
                         return (
-                            <td key={header} className="px-1 py-1 whitespace-nowrap">
+                            <td key={header} className="border border-slate-700 whitespace-nowrap p-0">
                                 <input
                                     type="text"
                                     value={value !== undefined && value !== null ? String(value) : ''}
                                     onChange={e => mappedKey && handlePastedDataChange(rowIndex, mappedKey, e.target.value)}
                                     disabled={!mappedKey}
-                                    className="w-full bg-slate-700 border border-slate-600 rounded py-1 px-2 text-white shadow-sm focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:bg-slate-800 disabled:text-slate-500"
+                                    className="w-full bg-transparent border-0 rounded-none py-1.5 px-2 text-white focus:outline-none focus:ring-2 focus:ring-inset focus:ring-indigo-500 disabled:bg-slate-800 disabled:text-slate-500"
                                 />
                             </td>
                         )
