@@ -619,18 +619,24 @@ const AdminPanel: React.FC<{ currentUser: User }> = ({ currentUser }) => {
       )}
 
       {userToDelete && (
-        <Modal isOpen={isDeleteUserModalOpen} onClose={() => setIsDeleteUserModalOpen(false)} title="Confirm Deletion">
-          <div className="text-slate-300 space-y-3">
-            <p>Are you sure you want to delete the user: <strong className="text-white">{userToDelete.email}</strong>?</p>
-            <div className="bg-amber-900/50 border border-amber-700/50 p-3 rounded-md text-sm">
-                This action will only delete the user account.
-                <br />
-                All speaker entries created by this user will <strong className="text-white">remain in the database</strong>. This action cannot be undone.
+        <Modal isOpen={isDeleteUserModalOpen} onClose={() => setIsDeleteUserModalOpen(false)} title={`Confirm Deletion of ${userToDelete.email}`}>
+          <div className="text-slate-300 space-y-4">
+            <p>Please confirm that you want to delete the user account for <strong className="text-white">{userToDelete.email}</strong>.</p>
+            <div className="bg-slate-700/50 border border-slate-600 p-4 rounded-lg text-sm">
+                <h4 className="font-bold text-amber-400 mb-2">Data Preservation Notice</h4>
+                <ul className="list-disc list-inside space-y-1">
+                    <li>The user account will be <strong className="text-red-400">permanently deleted</strong>.</li>
+                    <li>
+                        All <strong className="text-white">{speakerCountsByUser.get(userToDelete.email) || 0} speaker entries</strong> created by this user 
+                        will be <strong className="text-green-400">preserved</strong> and remain in the database.
+                    </li>
+                </ul>
+                <p className="mt-3 text-xs text-slate-400">This action cannot be undone.</p>
             </div>
           </div>
-          <div className="pt-4 flex justify-end space-x-3">
+          <div className="pt-5 flex justify-end space-x-3">
             <button type="button" onClick={() => setIsDeleteUserModalOpen(false)} className="px-4 py-2 bg-slate-600 text-white font-semibold rounded-lg shadow-md hover:bg-slate-700">Cancel</button>
-            <button type="button" onClick={handleDeleteUser} className="px-4 py-2 bg-red-600 text-white font-semibold rounded-lg shadow-md hover:bg-red-700">Delete User</button>
+            <button type="button" onClick={handleDeleteUser} className="px-4 py-2 bg-red-600 text-white font-semibold rounded-lg shadow-md hover:bg-red-700">Yes, Delete User</button>
           </div>
         </Modal>
       )}
