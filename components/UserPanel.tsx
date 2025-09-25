@@ -3,6 +3,7 @@ import type { SpeakerData } from '../types';
 import * as api from '../mockApi';
 import Modal from './Modal';
 import Toast from './Toast';
+import Papa from 'papaparse';
 
 interface UserPanelProps {
   data: SpeakerData[];
@@ -79,6 +80,11 @@ const UserPanel: React.FC<UserPanelProps> = ({ data, onAddSpeaker, onUpdateSpeak
   
   const importFileRef = useRef<HTMLInputElement>(null);
   const workerRef = useRef<Worker | null>(null);
+
+  const [isPasteModalOpen, setIsPasteModalOpen] = useState(false);
+  const [pastedSpeakers, setPastedSpeakers] = useState<Partial<SpeakerData>[]>([]);
+  const [pastedHeaders, setPastedHeaders] = useState<string[]>([]);
+  const [pasteError, setPasteError] = useState<string | null>(null);
 
   const mandatoryFields: (keyof SpeakerData)[] = [
     'firstName', 'lastName', 'title', 'company', 'businessEmail',
@@ -311,6 +317,95 @@ const UserPanel: React.FC<UserPanelProps> = ({ data, onAddSpeaker, onUpdateSpeak
     workerRef.current.postMessage(file);
   };
 
+  const openPasteModal = () => {
+    setPastedSpeakers([]);
+    setPastedHeaders([]);
+    setPasteError(null);
+    setIsPasteModalOpen(true);
+  };
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    e.preventDefault();
+    const text = e.clipboardData.getData('text/plain');
+    setPasteError(null);
+
+    Papa.parse(text, {
+      header: true,
+      skipEmptyLines: true,
+      complete: (results) => {
+        if (results.errors.length > 0) {
+          setPasteError(`Error parsing data: ${results.errors[0].message}`);
+          return;
+        }
+        if (results.data.length === 0 || !results.meta.fields) {
+            setPasteError('Could not find any data or headers to parse. Please include a header row.');
+            return;
+        }
+
+        const remappedData = (results.data as any[]).map(originalRow => {
+            const newRow: { [key: string]: any } = {};
+            for (const originalHeader in originalRow) {
+                const normalizedHeader = normalizeKey(originalHeader);
+                const finalKey = fieldMap[normalizedHeader];
+                if (finalKey) {
+                    newRow[finalKey] = originalRow[originalHeader];
+                }
+            }
+            return newRow as Partial<SpeakerData>;
+        });
+        
+        setPastedSpeakers(remappedData);
+        setPastedHeaders(results.meta.fields);
+      },
+      error: (err: Error) => {
+        setPasteError(`An error occurred during parsing: ${err.message}`);
+      }
+    });
+  };
+  
+  const handlePastedDataChange = (index: number, field: keyof SpeakerData, value: string | boolean) => {
+    const newData = [...pastedSpeakers];
+    (newData[index] as any)[field] = value;
+    setPastedSpeakers(newData);
+  };
+
+  const handleSavePastedData = async () => {
+     const dataToImport = pastedSpeakers
+        .filter(row => row.businessEmail && String(row.businessEmail).trim())
+        .map(row => {
+            const getBool = (key: keyof SpeakerData) => ['true', '1', 'yes'].includes(String(row[key] ?? '').toLowerCase());
+            return {
+                createdBy: currentUserEmail,
+                firstName: row.firstName || '', lastName: row.lastName || '', title: row.title || '', company: row.company || '',
+                businessEmail: row.businessEmail!, country: row.country || '', website: row.website || '',
+                fullName: row.fullName || `${row.firstName || ''} ${row.lastName || ''}`.trim(), extractedRole: row.extractedRole || '',
+                industry: row.industry || '', personLinkedinUrl: row.personLinkedinUrl || '', stage: row.stage || '', phoneNumber: row.phoneNumber || '',
+                employees: row.employees || '', location: row.location || '', city: row.city || '', state: row.state || '',
+                companyAddress: row.companyAddress || '', companyCity: row.companyCity || '', companyState: row.companyState || '',
+                companyCountry: row.companyCountry || '', companyPhone: row.companyPhone || '', secondaryEmail: row.secondaryEmail || '',
+                speakingTopic: row.speakingTopic || '', speakingLink: row.speakingLink || '', 
+                isEmailValid: getBool('isEmailValid'), isLinkedInValid: getBool('isLinkedInValid'), isWebsiteValid: getBool('isWebsiteValid'),
+                isCeo: getBool('isCeo'), isSpeaker: getBool('isSpeaker'), isAuthor: getBool('isAuthor'),
+            };
+        });
+
+    if (dataToImport.length === 0) {
+        setToast({ message: 'No valid speakers with a business email to import.', type: 'error'});
+        return;
+    }
+
+    try {
+        setToast({ message: `Importing ${dataToImport.length} valid records...`, type: 'success' });
+        const result = await api.bulkAddSpeakerData(dataToImport);
+        setToast({ message: `Import complete. Added ${result.importedCount}, skipped ${result.skippedCount} duplicates.`, type: 'success' });
+        setIsPasteModalOpen(false);
+        onDataImported();
+    } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
+        setToast({ message: `Import failed: ${errorMessage}`, type: 'error' });
+    }
+  };
+
   const filteredData = useMemo(() => {
      return data.filter(s => {
         const searchTermLower = searchTerm.toLowerCase();
@@ -389,6 +484,9 @@ const UserPanel: React.FC<UserPanelProps> = ({ data, onAddSpeaker, onUpdateSpeak
         <div className="mt-4 sm:mt-0 sm:ml-16 sm:flex-none flex items-center space-x-2">
            <button onClick={() => setIsProfileModalOpen(true)} type="button" className="inline-flex items-center justify-center rounded-md border border-slate-500 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2 focus:ring-offset-slate-900 sm:w-auto">
                 Profile
+            </button>
+            <button onClick={openPasteModal} type="button" className="inline-flex items-center justify-center rounded-md border border-transparent bg-slate-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2 focus:ring-offset-slate-900 sm:w-auto">
+                Paste from Sheet
             </button>
             <button onClick={handleImportClick} type="button" className="inline-flex items-center justify-center rounded-md border border-transparent bg-slate-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2 focus:ring-offset-slate-900 sm:w-auto">
                 Import Data
@@ -566,6 +664,86 @@ const UserPanel: React.FC<UserPanelProps> = ({ data, onAddSpeaker, onUpdateSpeak
             </div>
         </form>
        </Modal>
+
+      <Modal isOpen={isPasteModalOpen} onClose={() => setIsPasteModalOpen(false)} title="Paste Speaker Data" widthClass="max-w-6xl">
+        {pastedSpeakers.length === 0 ? (
+          <div>
+            <div className="p-4 bg-slate-900/50 border border-slate-700 rounded-lg text-slate-300 text-sm space-y-2">
+                <p><strong>Instructions:</strong></p>
+                <ul className="list-disc list-inside space-y-1">
+                    <li>Copy a range of cells from your spreadsheet (e.g., Excel, Google Sheets), including the header row.</li>
+                    <li>Paste it into the text box below.</li>
+                    <li>The system will parse the data and show you a preview.</li>
+                    <li>For large datasets (500+ rows), using the "Import Data" feature with a CSV file is recommended for better performance.</li>
+                </ul>
+            </div>
+            {pasteError && <p className="mt-4 bg-red-900/50 border border-red-700 text-red-300 text-sm p-3 rounded-md">{pasteError}</p>}
+            <textarea
+              onPaste={handlePaste}
+              placeholder="Paste your spreadsheet data here..."
+              className="mt-4 w-full h-60 bg-slate-700 border border-slate-600 rounded-md p-3 text-white shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-sm font-mono"
+            />
+          </div>
+        ) : (
+          <div>
+            <p className="text-slate-300 mb-4">Found <span className="font-bold text-white">{pastedSpeakers.length}</span> records. Please review the data below before saving. Unrecognized columns will be ignored.</p>
+            <div className="max-h-[60vh] overflow-auto ring-1 ring-slate-700 rounded-lg">
+              <table className="min-w-full divide-y divide-slate-700 text-sm">
+                <thead className="bg-slate-800 sticky top-0">
+                  <tr>
+                    {pastedHeaders.map((header) => (
+                      <th key={header} scope="col" className="py-2 px-3 text-left font-semibold text-white whitespace-nowrap">{header}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800 bg-slate-900">
+                  {pastedSpeakers.map((speaker, rowIndex) => (
+                    <tr key={rowIndex}>
+                      {pastedHeaders.map(header => {
+                        const mappedKey = fieldMap[normalizeKey(header)];
+                        const value = mappedKey ? speaker[mappedKey] : undefined;
+                        
+                        // Render a checkbox for boolean fields
+                        const isBooleanField = mappedKey && (mappedKey.startsWith('is'));
+                        if (isBooleanField) {
+                            return (
+                                <td key={header} className="px-3 py-1 whitespace-nowrap">
+                                    <div className="flex justify-center">
+                                    <input type="checkbox"
+                                        checked={value === 'true' || value === true}
+                                        onChange={e => handlePastedDataChange(rowIndex, mappedKey, e.target.checked)}
+                                        className="w-4 h-4 text-indigo-600 bg-gray-700 border-gray-600 rounded focus:ring-indigo-600"
+                                    />
+                                    </div>
+                                </td>
+                            );
+                        }
+
+                        return (
+                            <td key={header} className="px-1 py-1 whitespace-nowrap">
+                                <input
+                                    type="text"
+                                    value={value !== undefined && value !== null ? String(value) : ''}
+                                    onChange={e => mappedKey && handlePastedDataChange(rowIndex, mappedKey, e.target.value)}
+                                    disabled={!mappedKey}
+                                    className="w-full bg-slate-700 border border-slate-600 rounded py-1 px-2 text-white shadow-sm focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:bg-slate-800 disabled:text-slate-500"
+                                />
+                            </td>
+                        )
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="mt-6 flex justify-end space-x-3">
+              <button type="button" onClick={() => { setPastedSpeakers([]); setPastedHeaders([]); }} className="px-4 py-2 bg-slate-600 text-white font-semibold rounded-lg shadow-md hover:bg-slate-700">Paste Again</button>
+              <button type="button" onClick={handleSavePastedData} className="px-4 py-2 bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700">Save {pastedSpeakers.length} Speakers</button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
     </div>
   );
 };
