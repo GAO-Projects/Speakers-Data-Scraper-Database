@@ -211,34 +211,51 @@ apiRouter.post('/speakers', async (req, res) => {
     }
 });
 
+// A list of all columns that are allowed to be updated.
+const updatableSpeakerFields = [
+    "firstName", "lastName", "title", "company", "businessEmail", "country", 
+    "website", "fullName", "isEmailValid", "isLinkedInValid", "isWebsiteValid", 
+    "extractedRole", "isCeo", "isSpeaker", "isAuthor", "industry", 
+    "personLinkedinUrl", "stage", "phoneNumber", "employees", "location", 
+    "city", "state", "companyAddress", "companyCity", "companyState", 
+    "companyCountry", "companyPhone", "secondaryEmail", "speakingTopic", 
+    "speakingLink"
+];
+
 // Update speaker data - REWRITTEN FOR ROBUSTNESS
 apiRouter.put('/speakers/:id', async (req, res) => {
     const { id } = req.params;
-    const s = req.body;
+    const receivedData = req.body;
+
+    const setClauses = [];
+    const values = [];
+    let paramIndex = 1;
+
+    // Dynamically build the SET clause from the received data
+    updatableSpeakerFields.forEach(field => {
+        // Check if the field exists in the request body.
+        // We check for presence because a field could be explicitly set to null, '', or false.
+        if (field in receivedData) {
+            // Use double quotes to handle camelCase names in PostgreSQL
+            setClauses.push(`"${field}" = $${paramIndex++}`);
+            values.push(receivedData[field]);
+        }
+    });
+
+    // If no valid fields were provided to update, do nothing.
+    if (setClauses.length === 0) {
+        return res.status(400).json({ message: 'No updatable fields provided.' });
+    }
+
+    // Add the speaker ID to the end of the values array for the WHERE clause
+    values.push(id);
 
     const query = `
-        UPDATE speakers SET 
-            "firstName"=$1, "lastName"=$2, "title"=$3, "company"=$4, "businessEmail"=$5, "country"=$6, 
-            "website"=$7, "fullName"=$8, "isEmailValid"=$9, "isLinkedInValid"=$10, "isWebsiteValid"=$11, 
-            "extractedRole"=$12, "isCeo"=$13, "isSpeaker"=$14, "isAuthor"=$15, "industry"=$16, 
-            "personLinkedinUrl"=$17, "stage"=$18, "phoneNumber"=$19, "employees"=$20, "location"=$21, 
-            "city"=$22, "state"=$23, "companyAddress"=$24, "companyCity"=$25, "companyState"=$26, 
-            "companyCountry"=$27, "companyPhone"=$28, "secondaryEmail"=$29, "speakingTopic"=$30, 
-            "speakingLink"=$31 
-        WHERE id=$32 
-        RETURNING *
+        UPDATE speakers
+        SET ${setClauses.join(', ')}
+        WHERE id = $${paramIndex}
+        RETURNING *;
     `;
-
-    const values = [
-        s.firstName, s.lastName, s.title, s.company, s.businessEmail, s.country, 
-        s.website, s.fullName, s.isEmailValid, s.isLinkedInValid, s.isWebsiteValid, 
-        s.extractedRole, s.isCeo, s.isSpeaker, s.isAuthor, s.industry, 
-        s.personLinkedinUrl, s.stage, s.phoneNumber, s.employees, s.location, 
-        s.city, s.state, s.companyAddress, s.companyCity, s.companyState, 
-        s.companyCountry, s.companyPhone, s.secondaryEmail, s.speakingTopic, 
-        s.speakingLink, 
-        id
-    ];
 
     try {
         const result = await pool.query(query, values);
