@@ -52,7 +52,10 @@ export const login = async (email: string, pass: string): Promise<User | null> =
   }
 };
 
-export const getAllUsers = (): Promise<User[]> => apiFetch('/users') as Promise<User[]>;
+export const getAllUsers = (): Promise<User[]> => {
+    const cacheBuster = `?_=${Date.now()}`;
+    return apiFetch(`/users${cacheBuster}`) as Promise<User[]>;
+};
 
 export const addUser = (email: string, password?: string, isAdmin?: boolean): Promise<User & { password?: string }> => {
   // Password is now optional. Backend will generate if it's not provided.
@@ -87,16 +90,21 @@ export const deleteUser = (email: string): Promise<void> => {
 };
 
 export const exportInterns = (): Promise<Blob> => {
-    return apiFetch('/users/export/interns', { method: 'GET' }, true) as Promise<Blob>;
+    const cacheBuster = `?_=${Date.now()}`;
+    return apiFetch(`/users/export/interns${cacheBuster}`, { method: 'GET' }, true) as Promise<Blob>;
 };
 
 // --- Speaker Data Management ---
 
 export const getSpeakerDataByUser = (email: string): Promise<SpeakerData[]> => {
-  return apiFetch(`/speakers/user/${encodeURIComponent(email)}`) as Promise<SpeakerData[]>;
+  const cacheBuster = `?_=${Date.now()}`;
+  return apiFetch(`/speakers/user/${encodeURIComponent(email)}${cacheBuster}`) as Promise<SpeakerData[]>;
 };
 
-export const getAllSpeakerData = (): Promise<SpeakerData[]> => apiFetch('/speakers') as Promise<SpeakerData[]>;
+export const getAllSpeakerData = (): Promise<SpeakerData[]> => {
+    const cacheBuster = `?_=${Date.now()}`;
+    return apiFetch(`/speakers${cacheBuster}`) as Promise<SpeakerData[]>;
+};
 
 export const addSpeakerData = (data: Omit<SpeakerData, 'id'>): Promise<SpeakerData> => {
   return apiFetch('/speakers', {
@@ -117,8 +125,13 @@ export const deleteSpeakerData = (id: string): Promise<void> => {
 };
 
 export const isBusinessEmailInUse = async (businessEmail: string, speakerIdToExclude?: string): Promise<boolean> => {
-  const query = speakerIdToExclude ? `?exclude=${speakerIdToExclude}` : '';
-  const result: {inUse: boolean} = await apiFetch(`/speakers/email-check/${encodeURIComponent(businessEmail)}${query}`) as {inUse: boolean};
+  const params = new URLSearchParams({
+    '_': Date.now().toString()
+  });
+  if (speakerIdToExclude) {
+    params.set('exclude', speakerIdToExclude);
+  }
+  const result: {inUse: boolean} = await apiFetch(`/speakers/email-check/${encodeURIComponent(businessEmail)}?${params.toString()}`) as {inUse: boolean};
   return result.inUse;
 };
 
@@ -130,9 +143,11 @@ export const bulkAddSpeakerData = (data: Omit<SpeakerData, 'id'>[]): Promise<{ i
 };
 
 export const exportAllSpeakers = (): Promise<Blob> => {
-    return apiFetch('/speakers/export', { method: 'GET' }, true) as Promise<Blob>;
+    const cacheBuster = `?_=${Date.now()}`;
+    return apiFetch(`/speakers/export${cacheBuster}`, { method: 'GET' }, true) as Promise<Blob>;
 };
 
 export const exportUserSpeakers = (email: string): Promise<Blob> => {
-    return apiFetch(`/speakers/export/user/${encodeURIComponent(email)}`, { method: 'GET' }, true) as Promise<Blob>;
+    const cacheBuster = `?_=${Date.now()}`;
+    return apiFetch(`/speakers/export/user/${encodeURIComponent(email)}${cacheBuster}`, { method: 'GET' }, true) as Promise<Blob>;
 };
